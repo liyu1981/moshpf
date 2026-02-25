@@ -15,7 +15,7 @@ import (
 	"github.com/user/moshpf/pkg/tunnel"
 )
 
-func Run(verbose bool) error {
+func Run() error {
 	logger.Init()
 	log.Info().Msg("Agent starting")
 

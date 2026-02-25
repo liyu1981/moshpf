@@ -12,9 +12,9 @@ import (
 	"github.com/user/moshpf/pkg/tunnel"
 )
 
-func Run(args []string, remoteBinaryPath string, verbose bool, isDev bool) error {
+func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: moshpf [-remote-path ...] [user@]host")
+		return fmt.Errorf("usage: moshpf mosh [user@]host")
 	}
 
 	target := args[0]
@@ -52,10 +52,7 @@ func Run(args []string, remoteBinaryPath string, verbose bool, isDev bool) error
 	go io.Copy(os.Stderr, stderr)
 
 	log.Info().Str("path", remotePath).Msg("Starting remote agent")
-	agentCmd := fmt.Sprintf("%s -agent", remotePath)
-	if verbose {
-		agentCmd += " -v"
-	}
+	agentCmd := fmt.Sprintf("%s agent", remotePath)
 	if err := session.Start(agentCmd); err != nil {
 		return err
 	}
