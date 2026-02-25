@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update version in Go constant
+        shell: bash
+        run: |
+          VERSION=${{ github.ref_name }}
+          # Remove 'v' prefix if present
+          CLEAN_VERSION=$(echo $VERSION | sed 's/^v//')
+          sed -i "s/const Version = \"dev\"/const Version = \"$CLEAN_VERSION\"/" cmd/moshpf/main.go
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" -o moshpf ./cmd/moshpf/main.go
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION=${{ github.ref_name }}
+          tar -czvf moshpf-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz moshpf
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshpf-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: moshpf-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true

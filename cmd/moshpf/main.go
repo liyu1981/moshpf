@@ -11,6 +11,8 @@ import (
 	"github.com/user/moshpf/pkg/protocol"
 )
 
+const Version = "dev"
+
 func main() {
 	logger.Init()
 	
@@ -23,7 +25,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "version":
-		fmt.Println(protocol.Version)
+		fmt.Printf("moshpf version %s (protocol version %s)\n", Version, protocol.Version)
 	case "agent":
 		if err := agent.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
