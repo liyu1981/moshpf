@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"syscall"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/term"
 	"net"
 
 	"github.com/rs/zerolog/log"
@@ -41,9 +43,16 @@ func createSSHConfig(username string) (*ssh.ClientConfig, error) {
 		}
 	}
 
-	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no SSH auth methods found (checked agent and default ~/.ssh/id_* keys)")
-	}
+	// Always allow password fallback
+	authMethods = append(authMethods, ssh.PasswordCallback(func() (string, error) {
+		fmt.Printf("Password for %s: ", username)
+		password, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Println() // Print newline after password entry
+		if err != nil {
+			return "", err
+		}
+		return string(password), nil
+	}))
 
 	return &ssh.ClientConfig{
 		User:            username,
