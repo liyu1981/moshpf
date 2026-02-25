@@ -14,24 +14,35 @@ import (
 )
 
 func createSSHConfig(username string) (*ssh.ClientConfig, error) {
-	sshAgent, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
 	var authMethods []ssh.AuthMethod
-	if err == nil {
-		authMethods = append(authMethods, ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers))
+
+	// Try SSH agent
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		if conn, err := net.Dial("unix", sock); err == nil {
+			// Note: we don't close conn because the agent client signers might need it
+			authMethods = append(authMethods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+		}
 	}
 
-	// Try default keys if agent fails or is empty
-	home, _ := os.UserHomeDir()
-	keyPath := filepath.Join(home, ".ssh", "id_ed25519")
-	if key, err := os.ReadFile(keyPath); err == nil {
-		signer, err := ssh.ParsePrivateKey(key)
-		if err == nil {
-			authMethods = append(authMethods, ssh.PublicKeys(signer))
+	// Try default keys
+	if home, err := os.UserHomeDir(); err == nil {
+		var signers []ssh.Signer
+		for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"} {
+			path := filepath.Join(home, ".ssh", name)
+			if key, err := os.ReadFile(path); err == nil {
+				signer, err := ssh.ParsePrivateKey(key)
+				if err == nil {
+					signers = append(signers, signer)
+				}
+			}
+		}
+		if len(signers) > 0 {
+			authMethods = append(authMethods, ssh.PublicKeys(signers...))
 		}
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no SSH auth methods found")
+		return nil, fmt.Errorf("no SSH auth methods found (checked agent and default ~/.ssh/id_* keys)")
 	}
 
 	return &ssh.ClientConfig{
