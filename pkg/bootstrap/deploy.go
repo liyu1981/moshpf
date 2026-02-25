@@ -13,26 +13,34 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func DeployAgent(client *ssh.Client, remotePath string) (string, error) {
+func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, error) {
 	if strings.HasPrefix(remotePath, "~/") {
 		// Basic home expansion
 		remotePath = ".local/bin/moshpf" // Assume relative to home if it starts with ~/
 	}
-	
-	// Check version
-	session, err := client.NewSession()
-	if err != nil {
-		return "", err
+
+	shouldDeploy := force
+
+	if !shouldDeploy {
+		// Check version
+		session, err := client.NewSession()
+		if err != nil {
+			return "", err
+		}
+		defer session.Close()
+
+		var b bytes.Buffer
+		session.Stdout = &b
+		// Try to get version. If it fails, we assume it's not installed or broken.
+		err = session.Run(fmt.Sprintf("%s version", remotePath))
+		installedVersion := strings.TrimSpace(b.String())
+
+		if err != nil || installedVersion != protocol.Version {
+			shouldDeploy = true
+		}
 	}
-	defer session.Close()
 
-	var b bytes.Buffer
-	session.Stdout = &b
-	// Try to get version. If it fails, we assume it's not installed or broken.
-	err = session.Run(fmt.Sprintf("%s -version", remotePath))
-	installedVersion := strings.TrimSpace(b.String())
-
-	if err != nil || installedVersion != protocol.Version {
+	if shouldDeploy {
 		log.Info().Str("version", protocol.Version).Msg("Deploying moshpf to remote")
 		if err := uploadBinary(client, remotePath); err != nil {
 			return "", fmt.Errorf("failed to upload binary: %v", err)

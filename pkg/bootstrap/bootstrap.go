@@ -24,7 +24,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	}
 	defer client.Close()
 
-	remotePath, err := DeployAgent(client, remoteBinaryPath)
+	remotePath, err := DeployAgent(client, remoteBinaryPath, isDev)
 	if err != nil {
 		return fmt.Errorf("failed to deploy agent: %v", err)
 	}
@@ -82,7 +82,15 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 
 	log.Info().Msg("Tunnel established")
 
-	fwd := forward.NewForwarder(tSession)
+	remoteHostname := target
+	for i := 0; i < len(target); i++ {
+		if target[i] == '@' {
+			remoteHostname = target[i+1:]
+			break
+		}
+	}
+
+	fwd := forward.NewForwarder(tSession, remoteHostname)
 
 	go func() {
 		for {
@@ -102,11 +110,25 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 			case protocol.ListenRequest:
 				log.Info().
 					Str("local", m.LocalAddr).
-					Str("remote", fmt.Sprintf("%s:%d", m.RemoteHost, m.RemotePort)).
+					Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
 					Msg("Dynamic listen request received")
 				if err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort); err != nil {
 					log.Error().Err(err).Msg("Failed to handle dynamic listen request")
 				}
+			case protocol.ListRequest:
+				_ = tSession.Send(protocol.ListResponse{
+					Ports: fwd.GetActivePorts(),
+				})
+			case protocol.CloseRequest:
+				log.Info().
+					Str("remote", remoteHostname).
+					Uint16("port", m.Port).
+					Msg("Close request received")
+				success := fwd.CloseForward(m.Port)
+				_ = tSession.Send(protocol.CloseResponse{
+					Port:    m.Port,
+					Success: success,
+				})
 			case protocol.Shutdown:
 				return
 			}

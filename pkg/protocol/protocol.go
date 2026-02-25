@@ -39,6 +39,22 @@ type ListenRequest struct {
 	RemotePort uint16
 }
 
+type ListRequest struct{}
+
+type ListResponse struct {
+	Ports []uint16
+}
+
+type CloseRequest struct {
+	Port uint16
+}
+
+type CloseResponse struct {
+	Port    uint16
+	Success bool
+	Reason  string
+}
+
 type Heartbeat struct{}
 
 type HeartbeatAck struct{}
@@ -54,6 +70,10 @@ func Register() {
 	gob.Register(ForwardAck{})
 	gob.Register(ForwardErr{})
 	gob.Register(ListenRequest{})
+	gob.Register(ListRequest{})
+	gob.Register(ListResponse{})
+	gob.Register(CloseRequest{})
+	gob.Register(CloseResponse{})
 	gob.Register(Heartbeat{})
 	gob.Register(HeartbeatAck{})
 	gob.Register(Shutdown{})

@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -12,13 +13,18 @@ import (
 )
 
 type Forwarder struct {
-	session *tunnel.Session
-	nextID  uint32
+	session     *tunnel.Session
+	remoteName  string
+	nextID      uint32
+	listeners   map[uint16]net.Listener
+	mu          sync.Mutex
 }
 
-func NewForwarder(session *tunnel.Session) *Forwarder {
+func NewForwarder(session *tunnel.Session, remoteName string) *Forwarder {
 	return &Forwarder{
-		session: session,
+		session:    session,
+		remoteName: remoteName,
+		listeners:  make(map[uint16]net.Listener),
 	}
 }
 
@@ -27,14 +33,33 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 	if err != nil {
 		return err
 	}
+
+	displayHost := remoteHost
+	if remoteHost == "localhost" || remoteHost == "127.0.0.1" {
+		displayHost = f.remoteName
+	}
+
+	f.mu.Lock()
+	if oldLn, exists := f.listeners[remotePort]; exists {
+		oldLn.Close()
+	}
+	f.listeners[remotePort] = ln
+	f.mu.Unlock()
+
 	log.Info().
 		Str("local", localAddr).
-		Str("remote_host", remoteHost).
-		Uint16("remote_port", remotePort).
+		Str("remote", fmt.Sprintf("%s:%d", displayHost, remotePort)).
 		Msg("Forwarding started")
 
 	go func() {
-		defer ln.Close()
+		defer func() {
+			ln.Close()
+			f.mu.Lock()
+			if f.listeners[remotePort] == ln {
+				delete(f.listeners, remotePort)
+			}
+			f.mu.Unlock()
+		}()
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
@@ -45,6 +70,31 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 	}()
 
 	return nil
+}
+
+func (f *Forwarder) CloseForward(port uint16) bool {
+	f.mu.Lock()
+	ln, ok := f.listeners[port]
+	if ok {
+		ln.Close()
+		delete(f.listeners, port)
+		log.Info().
+			Str("remote", f.remoteName).
+			Uint16("port", port).
+			Msg("Forwarding stopped")
+	}
+	f.mu.Unlock()
+	return ok
+}
+
+func (f *Forwarder) GetActivePorts() []uint16 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ports := make([]uint16, 0, len(f.listeners))
+	for p := range f.listeners {
+		ports = append(ports, p)
+	}
+	return ports
 }
 
 func (f *Forwarder) handleConnection(localConn net.Conn, remoteHost string, remotePort uint16) {

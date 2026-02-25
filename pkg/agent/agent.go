@@ -8,12 +8,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/user/moshpf/pkg/logger"
 	"github.com/user/moshpf/pkg/protocol"
 	"github.com/user/moshpf/pkg/tunnel"
 )
+
+type Agent struct {
+	session   *tunnel.Session
+	listChan  chan []uint16
+	closeChan chan protocol.CloseResponse
+}
 
 func Run() error {
 	logger.Init()
@@ -27,6 +34,12 @@ func Run() error {
 	session, err := tunnel.NewSession(conn, true)
 	if err != nil {
 		return err
+	}
+
+	a := &Agent{
+		session:   session,
+		listChan:  make(chan []uint16),
+		closeChan: make(chan protocol.CloseResponse),
 	}
 
 	msg, err := session.Receive()
@@ -51,7 +64,7 @@ func Run() error {
 	go session.StartHeartbeat(stopHeartbeat)
 	defer close(stopHeartbeat)
 
-	go startUnixSocketServer(session)
+	go a.startUnixSocketServer()
 
 	for {
 		msg, err := session.Receive()
@@ -72,6 +85,10 @@ func Run() error {
 		case protocol.ForwardRequest:
 			log.Info().Str("host", m.Host).Uint16("port", m.Port).Msg("Forward request received")
 			go handleForward(session, m)
+		case protocol.ListResponse:
+			a.listChan <- m.Ports
+		case protocol.CloseResponse:
+			a.closeChan <- m
 		default:
 			log.Debug().Type("type", msg).Msg("Unknown message type received")
 		}
@@ -110,7 +127,7 @@ func handleForward(session *tunnel.Session, req protocol.ForwardRequest) {
 	wg.Wait()
 }
 
-func startUnixSocketServer(session *tunnel.Session) {
+func (a *Agent) startUnixSocketServer() {
 	sockPath := protocol.GetUnixSocketPath()
 	_ = os.Remove(sockPath)
 
@@ -129,11 +146,11 @@ func startUnixSocketServer(session *tunnel.Session) {
 		if err != nil {
 			return
 		}
-		go handleUnixConn(session, conn)
+		go a.handleUnixConn(conn)
 	}
 }
 
-func handleUnixConn(session *tunnel.Session, conn net.Conn) {
+func (a *Agent) handleUnixConn(conn net.Conn) {
 	defer conn.Close()
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -141,25 +158,75 @@ func handleUnixConn(session *tunnel.Session, conn net.Conn) {
 		return
 	}
 
-	portStr := strings.TrimSpace(string(buf[:n]))
-	port, err := strconv.ParseUint(portStr, 10, 16)
-	if err != nil {
-		log.Warn().Str("input", portStr).Msg("Invalid port from unix socket")
-		return
-	}
+	cmd := strings.TrimSpace(string(buf[:n]))
+	if cmd == "LIST" {
+		err = a.session.Send(protocol.ListRequest{})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to send ListRequest")
+			return
+		}
 
-	localAddr := fmt.Sprintf(":%d", port)
-	remoteHost := "localhost"
-	remotePort := uint16(port)
+		select {
+		case ports := <-a.listChan:
+			res := ""
+			for i, p := range ports {
+				if i > 0 {
+					res += ","
+				}
+				res += fmt.Sprintf("%d", p)
+			}
+			if res == "" {
+				res = "(none)"
+			}
+			_, _ = conn.Write([]byte(res))
+		case <-time.After(5 * time.Second):
+			_, _ = conn.Write([]byte("ERROR: Timeout waiting for list response"))
+		}
+	} else if strings.HasPrefix(cmd, "CLOSE:") {
+		portStr := strings.TrimPrefix(cmd, "CLOSE:")
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil {
+			_, _ = conn.Write([]byte("ERROR: Invalid port"))
+			return
+		}
 
-	log.Info().Uint16("port", remotePort).Msg("Requesting listen from daemon")
-	err = session.Send(protocol.ListenRequest{
-		LocalAddr:  localAddr,
-		RemoteHost: remoteHost,
-		RemotePort: remotePort,
-	})
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to send ListenRequest")
+		err = a.session.Send(protocol.CloseRequest{Port: uint16(port)})
+		if err != nil {
+			_, _ = conn.Write([]byte("ERROR: Failed to send CloseRequest"))
+			return
+		}
+
+		select {
+		case resp := <-a.closeChan:
+			if resp.Success {
+				_, _ = conn.Write([]byte(fmt.Sprintf("Closed port %d", resp.Port)))
+			} else {
+				_, _ = conn.Write([]byte(fmt.Sprintf("ERROR: Failed to close port %d: %s", resp.Port, resp.Reason)))
+			}
+		case <-time.After(5 * time.Second):
+			_, _ = conn.Write([]byte("ERROR: Timeout waiting for close response"))
+		}
+	} else if strings.HasPrefix(cmd, "FORWARD:") {
+		portStr := strings.TrimPrefix(cmd, "FORWARD:")
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil {
+			log.Warn().Str("input", portStr).Msg("Invalid port from unix socket")
+			return
+		}
+
+		localAddr := fmt.Sprintf(":%d", port)
+		remoteHost := "localhost"
+		remotePort := uint16(port)
+
+		log.Info().Uint16("port", remotePort).Msg("Requesting listen from daemon")
+		err = a.session.Send(protocol.ListenRequest{
+			LocalAddr:  localAddr,
+			RemoteHost: remoteHost,
+			RemotePort: remotePort,
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to send ListenRequest")
+		}
 	}
 }
 
