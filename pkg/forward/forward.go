@@ -13,11 +13,12 @@ import (
 )
 
 type Forwarder struct {
-	session     *tunnel.Session
-	remoteName  string
-	nextID      uint32
-	listeners   map[uint16]net.Listener
-	mu          sync.Mutex
+	session    *tunnel.Session
+	remoteName string
+	nextID     uint32
+	listeners  map[uint16]net.Listener
+	forwards   map[uint16]protocol.ForwardEntry
+	mu         sync.Mutex
 }
 
 func NewForwarder(session *tunnel.Session, remoteName string) *Forwarder {
@@ -25,12 +26,24 @@ func NewForwarder(session *tunnel.Session, remoteName string) *Forwarder {
 		session:    session,
 		remoteName: remoteName,
 		listeners:  make(map[uint16]net.Listener),
+		forwards:   make(map[uint16]protocol.ForwardEntry),
 	}
 }
 
 func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16) error {
 	ln, err := net.Listen("tcp", localAddr)
+
+	f.mu.Lock()
+	f.forwards[remotePort] = protocol.ForwardEntry{
+		LocalAddr:  localAddr,
+		RemoteHost: remoteHost,
+		RemotePort: remotePort,
+	}
 	if err != nil {
+		entry := f.forwards[remotePort]
+		entry.Error = err.Error()
+		f.forwards[remotePort] = entry
+		f.mu.Unlock()
 		return err
 	}
 
@@ -39,7 +52,6 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		displayHost = f.remoteName
 	}
 
-	f.mu.Lock()
 	if oldLn, exists := f.listeners[remotePort]; exists {
 		oldLn.Close()
 	}
@@ -57,6 +69,7 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 			f.mu.Lock()
 			if f.listeners[remotePort] == ln {
 				delete(f.listeners, remotePort)
+				delete(f.forwards, remotePort)
 			}
 			f.mu.Unlock()
 		}()
@@ -78,6 +91,7 @@ func (f *Forwarder) CloseForward(port uint16) bool {
 	if ok {
 		ln.Close()
 		delete(f.listeners, port)
+		delete(f.forwards, port)
 		log.Info().
 			Str("remote", f.remoteName).
 			Uint16("port", port).
@@ -87,14 +101,14 @@ func (f *Forwarder) CloseForward(port uint16) bool {
 	return ok
 }
 
-func (f *Forwarder) GetActivePorts() []uint16 {
+func (f *Forwarder) GetForwardEntries() []protocol.ForwardEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	ports := make([]uint16, 0, len(f.listeners))
-	for p := range f.listeners {
-		ports = append(ports, p)
+	entries := make([]protocol.ForwardEntry, 0, len(f.forwards))
+	for _, e := range f.forwards {
+		entries = append(entries, e)
 	}
-	return ports
+	return entries
 }
 
 func (f *Forwarder) handleConnection(localConn net.Conn, remoteHost string, remotePort uint16) {

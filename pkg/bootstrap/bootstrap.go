@@ -112,12 +112,19 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 					Str("local", m.LocalAddr).
 					Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
 					Msg("Dynamic listen request received")
-				if err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort); err != nil {
-					log.Error().Err(err).Msg("Failed to handle dynamic listen request")
+				err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort)
+				resp := protocol.ListenResponse{
+					RemotePort: m.RemotePort,
+					Success:    err == nil,
 				}
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to handle dynamic listen request")
+					resp.Reason = err.Error()
+				}
+				_ = tSession.Send(resp)
 			case protocol.ListRequest:
 				_ = tSession.Send(protocol.ListResponse{
-					Ports: fwd.GetActivePorts(),
+					Entries: fwd.GetForwardEntries(),
 				})
 			case protocol.CloseRequest:
 				log.Info().

@@ -17,9 +17,10 @@ import (
 )
 
 type Agent struct {
-	session   *tunnel.Session
-	listChan  chan []uint16
-	closeChan chan protocol.CloseResponse
+	session    *tunnel.Session
+	listChan   chan []protocol.ForwardEntry
+	closeChan  chan protocol.CloseResponse
+	listenChan chan protocol.ListenResponse
 }
 
 func Run() error {
@@ -37,9 +38,10 @@ func Run() error {
 	}
 
 	a := &Agent{
-		session:   session,
-		listChan:  make(chan []uint16),
-		closeChan: make(chan protocol.CloseResponse),
+		session:    session,
+		listChan:   make(chan []protocol.ForwardEntry),
+		closeChan:  make(chan protocol.CloseResponse),
+		listenChan: make(chan protocol.ListenResponse),
 	}
 
 	msg, err := session.Receive()
@@ -86,7 +88,14 @@ func Run() error {
 			log.Info().Str("host", m.Host).Uint16("port", m.Port).Msg("Forward request received")
 			go handleForward(session, m)
 		case protocol.ListResponse:
-			a.listChan <- m.Ports
+			a.listChan <- m.Entries
+		case protocol.ListenResponse:
+			if m.Success {
+				log.Info().Uint16("port", m.RemotePort).Msg("Forwarding confirmed by daemon")
+			} else {
+				log.Error().Uint16("port", m.RemotePort).Str("reason", m.Reason).Msg("Forwarding failed in daemon")
+			}
+			a.listenChan <- m
 		case protocol.CloseResponse:
 			a.closeChan <- m
 		default:
@@ -167,13 +176,17 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		}
 
 		select {
-		case ports := <-a.listChan:
+		case entries := <-a.listChan:
 			res := ""
-			for i, p := range ports {
+			for i, e := range entries {
 				if i > 0 {
-					res += ","
+					res += "\n"
 				}
-				res += fmt.Sprintf("%d", p)
+				status := "OK"
+				if e.Error != "" {
+					status = "ERROR: " + e.Error
+				}
+				res += fmt.Sprintf("%d -> %s (%s)", e.RemotePort, e.LocalAddr, status)
 			}
 			if res == "" {
 				res = "(none)"
@@ -210,7 +223,7 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		portStr := strings.TrimPrefix(cmd, "FORWARD:")
 		port, err := strconv.ParseUint(portStr, 10, 16)
 		if err != nil {
-			log.Warn().Str("input", portStr).Msg("Invalid port from unix socket")
+			_, _ = conn.Write([]byte("ERROR: Invalid port"))
 			return
 		}
 
@@ -226,6 +239,19 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		})
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to send ListenRequest")
+			_, _ = conn.Write([]byte("ERROR: Failed to send ListenRequest"))
+			return
+		}
+
+		select {
+		case resp := <-a.listenChan:
+			if resp.Success {
+				_, _ = conn.Write([]byte(fmt.Sprintf("Forwarding started for port %d", resp.RemotePort)))
+			} else {
+				_, _ = conn.Write([]byte(fmt.Sprintf("ERROR: Failed to start forwarding for port %d: %s", resp.RemotePort, resp.Reason)))
+			}
+		case <-time.After(5 * time.Second):
+			_, _ = conn.Write([]byte("ERROR: Timeout waiting for listen response"))
 		}
 	}
 }
