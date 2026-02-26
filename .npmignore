@@ -1,0 +1,26 @@
+# Go source code
+cmd/
+pkg/
+go.mod
+go.sum
+design/
+
+# Git metadata
+.git/
+.github/
+.gitignore
+
+# Documentation
+GEMINI.md
+README.md
+
+# Build artifacts
+moshpf
+mpf
+*.tar.gz
+artifacts/
+
+# System files
+.DS_Store
+node_modules/
+package-lock.json

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rs/zerolog/log"
 	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
 )
 

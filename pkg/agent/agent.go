@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/rs/zerolog/log"
 )
 
 type Agent struct {
@@ -189,7 +189,7 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 
 				localAddr := e.LocalAddr
 				if strings.HasPrefix(localAddr, ":") {
-					localAddr = resp.MasterIP + " " + localAddr[1:]
+					localAddr = resp.MasterIP + " :" + localAddr[1:]
 				} else if strings.Contains(localAddr, ":") {
 					localAddr = strings.Replace(localAddr, ":", " ", 1)
 				}

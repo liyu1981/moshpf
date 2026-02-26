@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	
+
 	"github.com/liyu1981/moshpf/pkg/agent"
 	"github.com/liyu1981/moshpf/pkg/bootstrap"
 	"github.com/liyu1981/moshpf/pkg/logger"
@@ -15,7 +15,7 @@ const Version = "dev"
 
 func main() {
 	logger.Init()
-	
+
 	if len(os.Args) < 2 {
 		printUsage()
 		return

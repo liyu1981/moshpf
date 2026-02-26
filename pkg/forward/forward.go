@@ -7,10 +7,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/rs/zerolog/log"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/rs/zerolog/log"
 )
 
 type Forwarder struct {
@@ -163,7 +163,7 @@ func (f *Forwarder) handleConnection(localConn net.Conn, remoteHost string, remo
 	defer localConn.Close()
 
 	id := atomic.AddUint32(&f.nextID, 1)
-	
+
 	err := f.session.Send(protocol.ForwardRequest{
 		ID:   id,
 		Host: remoteHost,

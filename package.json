@@ -1,0 +1,31 @@
+{
+  "name": "@liyu1981/mpf",
+  "version": "0.1.0",
+  "description": "Mosh Port Forwarding wrapper",
+  "main": "bin/index.js",
+  "bin": {
+    "mpf": "bin/index.js"
+  },
+  "scripts": {
+    "test": "echo "Error: no test specified" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liyu1981/moshpf.git"
+  },
+  "keywords": [
+    "mosh",
+    "ssh",
+    "port-forwarding",
+    "tunnel"
+  ],
+  "author": "Yu Li",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/liyu1981/moshpf/issues"
+  },
+  "homepage": "https://github.com/liyu1981/moshpf#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}

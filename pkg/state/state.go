@@ -32,7 +32,7 @@ func NewManager() (*Manager, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "forwards.json")
-	
+
 	m := &Manager{
 		path: path,
 		cfg: Config{
@@ -46,7 +46,7 @@ func NewManager() (*Manager, error) {
 			_ = json.Unmarshal(data, &m.cfg)
 		}
 	}
-	
+
 	if m.cfg.Remotes == nil {
 		m.cfg.Remotes = make(map[string]RemoteConfig)
 	}
@@ -62,7 +62,7 @@ func (m *Manager) AddForward(remote, slavePort, masterPort string) error {
 	if !ok || rc.Forwards == nil {
 		rc = RemoteConfig{Forwards: make(map[string]string)}
 	}
-	
+
 	rc.Forwards[masterPort] = slavePort
 	m.cfg.Remotes[remote] = rc
 	return m.save()
@@ -76,7 +76,7 @@ func (m *Manager) RemoveForward(remote, masterPort string) error {
 	if !ok || rc.Forwards == nil {
 		return nil
 	}
-	
+
 	delete(rc.Forwards, masterPort)
 	m.cfg.Remotes[remote] = rc
 	return m.save()

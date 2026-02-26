@@ -27,7 +27,7 @@ func Run(args []string, isDev bool) error {
 
 	// args should be the original args passed to mpf minus our flags
 	// For now, let's assume all remaining args are for mosh.
-	
+
 	moshPath, err := exec.LookPath("mosh")
 	if err != nil {
 		return fmt.Errorf("mosh not found: %v", err)

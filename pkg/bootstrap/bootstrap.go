@@ -6,12 +6,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/liyu1981/moshpf/pkg/forward"
 	"github.com/liyu1981/moshpf/pkg/mosh"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/rs/zerolog/log"
 )
 
 func Run(args []string, remoteBinaryPath string, isDev bool) error {
@@ -20,7 +20,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	}
 
 	target := args[0]
-	
+
 	stateMgr, err := state.NewManager()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize state manager")

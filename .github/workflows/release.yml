@@ -17,6 +17,10 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
 
     steps:
       - name: Checkout code
@@ -43,19 +47,19 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o moshpf ./cmd/moshpf/main.go
+          go build -ldflags="-s -w" -o mpf ./cmd/moshpf/main.go
 
       - name: Package
         shell: bash
         run: |
           VERSION=${{ github.ref_name }}
-          tar -czvf moshpf-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz moshpf
+          tar -czvf mpf-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz mpf
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: moshpf-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: moshpf-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          name: mpf-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: mpf-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
 
   release:
     name: Create Release

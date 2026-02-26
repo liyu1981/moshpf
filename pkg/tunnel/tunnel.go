@@ -20,7 +20,7 @@ type Session struct {
 
 func NewSession(conn io.ReadWriteCloser, server bool) (*Session, error) {
 	protocol.Register()
-	
+
 	var ySession *yamux.Session
 	var err error
 	if server {
