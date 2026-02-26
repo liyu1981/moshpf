@@ -59,7 +59,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Port forwards:\n%s\n", resp)
+		if resp != "" {
+			fmt.Println(resp)
+		}
 	case "mosh":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: mpf mosh [user@]host")

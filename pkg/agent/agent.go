@@ -186,10 +186,7 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 				if e.Error != "" {
 					status = "ERROR: " + e.Error
 				}
-				res += fmt.Sprintf("%d -> %s (%s)", e.RemotePort, e.LocalAddr, status)
-			}
-			if res == "" {
-				res = "(none)"
+				res += fmt.Sprintf("%d %s", e.RemotePort, status)
 			}
 			_, _ = conn.Write([]byte(res))
 		case <-time.After(5 * time.Second):
