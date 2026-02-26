@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
-	"github.com/user/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/protocol"
 )
 
 type Session struct {

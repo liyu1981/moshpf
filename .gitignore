@@ -16,4 +16,5 @@
 
 # Project specific
 /moshpf
+/mpf
 /tmp/moshpf-*.sock

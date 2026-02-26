@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
-	"github.com/user/moshpf/pkg/protocol"
-	"github.com/user/moshpf/pkg/tunnel"
+	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/tunnel"
 )
 
 type Forwarder struct {

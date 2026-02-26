@@ -9,14 +9,14 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"github.com/user/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/protocol"
 	"golang.org/x/crypto/ssh"
 )
 
 func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, error) {
 	if strings.HasPrefix(remotePath, "~/") {
 		// Basic home expansion
-		remotePath = ".local/bin/moshpf" // Assume relative to home if it starts with ~/
+		remotePath = ".local/bin/mpf" // Assume relative to home if it starts with ~/
 	}
 
 	shouldDeploy := force
@@ -41,7 +41,7 @@ func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, err
 	}
 
 	if shouldDeploy {
-		log.Info().Str("version", protocol.Version).Msg("Deploying moshpf to remote")
+		log.Info().Str("version", protocol.Version).Msg("Deploying mpf to remote")
 		if err := uploadBinary(client, remotePath); err != nil {
 			return "", fmt.Errorf("failed to upload binary: %v", err)
 		}

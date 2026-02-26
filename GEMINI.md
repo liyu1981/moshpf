@@ -1,0 +1,1 @@
+The program operates in two modes: a local master process and a remote slave process.

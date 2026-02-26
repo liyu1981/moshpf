@@ -1,5 +1,5 @@
 
-# moshpf: Mosh with Port Forwarding
+# mpf: Mosh with Port Forwarding
 
 A Go-based wrapper for `mosh` that adds SSH-style port forwarding capabilities by establishing a tunneled daemon-agent relationship before handing over control to `mosh`.
 
@@ -15,7 +15,7 @@ The system consists of a single Go binary that functions in two modes: **Local D
 ### A. Connection & Bootstrapping
 
 1. **SSH Client:** Use `golang.org/x/crypto/ssh` to establish the initial secure connection.
-2. **Agent Injection:** The local daemon checks for a `moshpf` binary on the remote host (at `~/.local/bin/moshpf` by default) by comparing an embedded version string. If missing or outdated, it transfers the correct architecture's binary (selected from embedded cross-compiled assets) via an SCP-like copy over the SSH connection. The transfer is followed by a checksum verification step before the agent is started.
+2. **Agent Injection:** The local daemon checks for a `mpf` binary on the remote host (at `~/.local/bin/mpf` by default) by comparing an embedded version string. If missing or outdated, it transfers the correct architecture's binary (selected from embedded cross-compiled assets) via an SCP-like copy over the SSH connection. The transfer is followed by a checksum verification step before the agent is started.
 3. **Tunneling:** A stream multiplexer (`hashicorp/yamux`) runs over the stdin/stdout of the remotely-executed agent process, providing a single high-performance backbone for all forwarded ports and the control channel.
 
 ### B. Control Protocol

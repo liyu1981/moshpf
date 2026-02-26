@@ -19,7 +19,7 @@ func Init() {
 	}
 
 	// Non-dev mode: try syslog
-	w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "moshpf")
+	w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "mpf")
 	if err == nil {
 		// Direct zerolog output to syslog writer with level mapping
 		log.Logger = zerolog.New(zerolog.SyslogLevelWriter(w))

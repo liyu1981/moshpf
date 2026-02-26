@@ -80,5 +80,5 @@ func Register() {
 }
 
 func GetUnixSocketPath() string {
-	return "/tmp/moshpf-" + strconv.Itoa(os.Getuid()) + ".sock"
+	return "/tmp/mpf-" + strconv.Itoa(os.Getuid()) + ".sock"
 }

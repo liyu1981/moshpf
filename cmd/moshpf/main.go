@@ -5,10 +5,10 @@ import (
 	"net"
 	"os"
 	
-	"github.com/user/moshpf/pkg/agent"
-	"github.com/user/moshpf/pkg/bootstrap"
-	"github.com/user/moshpf/pkg/logger"
-	"github.com/user/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/agent"
+	"github.com/liyu1981/moshpf/pkg/bootstrap"
+	"github.com/liyu1981/moshpf/pkg/logger"
+	"github.com/liyu1981/moshpf/pkg/protocol"
 )
 
 const Version = "dev"
@@ -25,7 +25,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "version":
-		fmt.Printf("moshpf version %s (protocol version %s)\n", Version, protocol.Version)
+		fmt.Printf("mpf version %s (protocol version %s)\n", Version, protocol.Version)
 	case "agent":
 		if err := agent.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
@@ -33,7 +33,7 @@ func main() {
 		}
 	case "forward":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: moshpf forward <port>")
+			fmt.Println("Usage: mpf forward <port>")
 			os.Exit(1)
 		}
 		resp, err := sendToAgent("FORWARD:" + os.Args[2])
@@ -48,7 +48,7 @@ func main() {
 		}
 	case "close":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: moshpf close <port>")
+			fmt.Println("Usage: mpf close <port>")
 			os.Exit(1)
 		}
 		resp, err := sendToAgent("CLOSE:" + os.Args[2])
@@ -66,11 +66,11 @@ func main() {
 		fmt.Printf("Active port forwards: %s\n", resp)
 	case "mosh":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: moshpf mosh [user@]host")
+			fmt.Println("Usage: mpf mosh [user@]host")
 			os.Exit(1)
 		}
 		// Default remote path
-		remotePath := "~/.local/bin/moshpf"
+		remotePath := "~/.local/bin/mpf"
 		if err := bootstrap.Run(os.Args[2:], remotePath, isDev); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -81,7 +81,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("Usage: moshpf <command> [args]")
+	fmt.Println("Usage: mpf <command> [args]")
 	fmt.Println("Commands:")
 	fmt.Println("  agent           Run in agent mode (internal use)")
 	fmt.Println("  forward <port>  Request port forward from an active session")

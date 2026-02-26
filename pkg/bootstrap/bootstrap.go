@@ -6,15 +6,15 @@ import (
 	"os"
 
 	"github.com/rs/zerolog/log"
-	"github.com/user/moshpf/pkg/forward"
-	"github.com/user/moshpf/pkg/mosh"
-	"github.com/user/moshpf/pkg/protocol"
-	"github.com/user/moshpf/pkg/tunnel"
+	"github.com/liyu1981/moshpf/pkg/forward"
+	"github.com/liyu1981/moshpf/pkg/mosh"
+	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/tunnel"
 )
 
 func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: moshpf mosh [user@]host")
+		return fmt.Errorf("usage: mpf mosh [user@]host")
 	}
 
 	target := args[0]

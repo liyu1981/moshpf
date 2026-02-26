@@ -25,7 +25,7 @@ func Run(args []string, isDev bool) error {
 		return scanner.Err()
 	}
 
-	// args should be the original args passed to moshpf minus our flags
+	// args should be the original args passed to mpf minus our flags
 	// For now, let's assume all remaining args are for mosh.
 	
 	moshPath, err := exec.LookPath("mosh")
