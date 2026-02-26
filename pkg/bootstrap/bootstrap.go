@@ -40,11 +40,12 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	go func() {
 		// Initial restore from state
 		if stateMgr != nil {
-			for _, pStr := range stateMgr.GetForwards(target) {
-				var p uint16
-				fmt.Sscanf(pStr, "%d", &p)
-				if p > 0 {
-					_ = fwd.ListenAndForward(fmt.Sprintf(":%d", p), "localhost", p)
+			for mStr, sStr := range stateMgr.GetForwards(target) {
+				var mPort, sPort uint16
+				fmt.Sscanf(mStr, "%d", &mPort)
+				fmt.Sscanf(sStr, "%d", &sPort)
+				if mPort > 0 && sPort > 0 {
+					_ = fwd.ListenAndForward(fmt.Sprintf(":%d", mPort), "localhost", sPort)
 				}
 			}
 		}

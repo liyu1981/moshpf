@@ -33,8 +33,10 @@ In a separate terminal (on the client side), use the `forward`, `list`, and `clo
 **Forward a port:**
 ```bash
 mpf forward 8080
+# or with explicit mapping (slave:master)
+mpf forward 20000:8080
 ```
-*Note: This currently assumes `localhost:8080` on the master maps to `localhost:8080` on the slave.*
+*Note: `mpf forward 20000:8080` means the master (local) listens on port 8080 and forwards to the slave (remote) port 20000.*
 
 **List active forwards:**
 ```bash

@@ -217,22 +217,33 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 			_, _ = conn.Write([]byte("ERROR: Timeout waiting for close response"))
 		}
 	} else if strings.HasPrefix(cmd, "FORWARD:") {
-		portStr := strings.TrimPrefix(cmd, "FORWARD:")
-		port, err := strconv.ParseUint(portStr, 10, 16)
-		if err != nil {
-			_, _ = conn.Write([]byte("ERROR: Invalid port"))
+		arg := strings.TrimPrefix(cmd, "FORWARD:")
+		var slavePort, masterPort uint16
+		if strings.Contains(arg, ":") {
+			parts := strings.Split(arg, ":")
+			s, _ := strconv.ParseUint(parts[0], 10, 16)
+			m, _ := strconv.ParseUint(parts[1], 10, 16)
+			slavePort = uint16(s)
+			masterPort = uint16(m)
+		} else {
+			p, _ := strconv.ParseUint(arg, 10, 16)
+			slavePort = uint16(p)
+			masterPort = uint16(p)
+		}
+
+		if slavePort == 0 || masterPort == 0 {
+			_, _ = conn.Write([]byte("ERROR: Invalid port mapping"))
 			return
 		}
 
-		localAddr := fmt.Sprintf(":%d", port)
+		localAddr := fmt.Sprintf(":%d", masterPort)
 		remoteHost := "localhost"
-		remotePort := uint16(port)
 
-		log.Info().Uint16("port", remotePort).Msg("Requesting listen from daemon")
+		log.Info().Uint16("slave", slavePort).Uint16("master", masterPort).Msg("Requesting listen from daemon")
 		err = a.session.Send(protocol.ListenRequest{
 			LocalAddr:  localAddr,
 			RemoteHost: remoteHost,
-			RemotePort: remotePort,
+			RemotePort: slavePort,
 		})
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to send ListenRequest")
@@ -243,9 +254,9 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		select {
 		case resp := <-a.listenChan:
 			if resp.Success {
-				_, _ = conn.Write([]byte(fmt.Sprintf("Forwarding started for port %d", resp.RemotePort)))
+				_, _ = conn.Write([]byte(fmt.Sprintf("Forwarding started: slave %d -> master %d", slavePort, masterPort)))
 			} else {
-				_, _ = conn.Write([]byte(fmt.Sprintf("ERROR: Failed to start forwarding for port %d: %s", resp.RemotePort, resp.Reason)))
+				_, _ = conn.Write([]byte(fmt.Sprintf("ERROR: Failed to start forwarding: %s", resp.Reason)))
 			}
 		case <-time.After(5 * time.Second):
 			_, _ = conn.Write([]byte("ERROR: Timeout waiting for listen response"))

@@ -48,24 +48,34 @@ func (f *Forwarder) SetSession(session *tunnel.Session) {
 }
 
 func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16) error {
+	var masterPort uint16
+	fmt.Sscanf(localAddr, ":%d", &masterPort)
+	if masterPort == 0 {
+		// Try to parse if it contains hostname
+		_, portStr, err := net.SplitHostPort(localAddr)
+		if err == nil {
+			fmt.Sscanf(portStr, "%d", &masterPort)
+		}
+	}
+
 	ln, err := net.Listen("tcp", localAddr)
 
 	f.mu.Lock()
-	f.forwards[remotePort] = protocol.ForwardEntry{
+	f.forwards[masterPort] = protocol.ForwardEntry{
 		LocalAddr:  localAddr,
 		RemoteHost: remoteHost,
 		RemotePort: remotePort,
 	}
 	if err != nil {
-		entry := f.forwards[remotePort]
+		entry := f.forwards[masterPort]
 		entry.Error = err.Error()
-		f.forwards[remotePort] = entry
+		f.forwards[masterPort] = entry
 		f.mu.Unlock()
 		return err
 	}
 
 	if f.state != nil {
-		_ = f.state.AddForward(f.target, fmt.Sprintf("%d", remotePort))
+		_ = f.state.AddForward(f.target, fmt.Sprintf("%d", remotePort), fmt.Sprintf("%d", masterPort))
 	}
 
 	displayHost := remoteHost
@@ -73,10 +83,10 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		displayHost = f.remoteName
 	}
 
-	if oldLn, exists := f.listeners[remotePort]; exists {
+	if oldLn, exists := f.listeners[masterPort]; exists {
 		oldLn.Close()
 	}
-	f.listeners[remotePort] = ln
+	f.listeners[masterPort] = ln
 	f.mu.Unlock()
 
 	log.Info().
@@ -88,9 +98,9 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		defer func() {
 			ln.Close()
 			f.mu.Lock()
-			if f.listeners[remotePort] == ln {
-				delete(f.listeners, remotePort)
-				delete(f.forwards, remotePort)
+			if f.listeners[masterPort] == ln {
+				delete(f.listeners, masterPort)
+				delete(f.forwards, masterPort)
 			}
 			f.mu.Unlock()
 		}()
@@ -106,20 +116,26 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 	return nil
 }
 
-func (f *Forwarder) CloseForward(port uint16) bool {
+func (f *Forwarder) CloseForward(masterPort uint16) bool {
 	f.mu.Lock()
-	ln, ok := f.listeners[port]
+	ln, ok := f.listeners[masterPort]
 	if ok {
 		ln.Close()
-		delete(f.listeners, port)
-		delete(f.forwards, port)
+		delete(f.listeners, masterPort)
+		delete(f.forwards, masterPort)
 		if f.state != nil {
-			_ = f.state.RemoveForward(f.target, fmt.Sprintf("%d", port))
+			_ = f.state.RemoveForward(f.target, fmt.Sprintf("%d", masterPort))
 		}
 		log.Info().
 			Str("remote", f.remoteName).
-			Uint16("port", port).
+			Uint16("port", masterPort).
 			Msg("Forwarding stopped")
+	} else if _, exists := f.forwards[masterPort]; exists {
+		// Even if no listener (e.g. failed), remove from forwards and state
+		delete(f.forwards, masterPort)
+		if f.state != nil {
+			_ = f.state.RemoveForward(f.target, fmt.Sprintf("%d", masterPort))
+		}
 	}
 	f.mu.Unlock()
 	return ok

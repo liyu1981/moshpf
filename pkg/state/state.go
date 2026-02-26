@@ -12,7 +12,8 @@ type Config struct {
 }
 
 type RemoteConfig struct {
-	Forwards []string `json:"forwards"`
+	// Map of masterPort -> slavePort
+	Forwards map[string]string `json:"forwards"`
 }
 
 type Manager struct {
@@ -53,46 +54,42 @@ func NewManager() (*Manager, error) {
 	return m, nil
 }
 
-func (m *Manager) AddForward(remote, port string) error {
+func (m *Manager) AddForward(remote, slavePort, masterPort string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	rc := m.cfg.Remotes[remote]
-	exists := false
-	for _, p := range rc.Forwards {
-		if p == port {
-			exists = true
-			break
-		}
+	rc, ok := m.cfg.Remotes[remote]
+	if !ok || rc.Forwards == nil {
+		rc = RemoteConfig{Forwards: make(map[string]string)}
 	}
-	if !exists {
-		rc.Forwards = append(rc.Forwards, port)
-		m.cfg.Remotes[remote] = rc
-		return m.save()
-	}
-	return nil
-}
-
-func (m *Manager) RemoveForward(remote, port string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	rc := m.cfg.Remotes[remote]
-	newForwards := make([]string, 0, len(rc.Forwards))
-	for _, p := range rc.Forwards {
-		if p != port {
-			newForwards = append(newForwards, p)
-		}
-	}
-	rc.Forwards = newForwards
+	
+	rc.Forwards[masterPort] = slavePort
 	m.cfg.Remotes[remote] = rc
 	return m.save()
 }
 
-func (m *Manager) GetForwards(remote string) []string {
+func (m *Manager) RemoveForward(remote, masterPort string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cfg.Remotes[remote].Forwards
+
+	rc, ok := m.cfg.Remotes[remote]
+	if !ok || rc.Forwards == nil {
+		return nil
+	}
+	
+	delete(rc.Forwards, masterPort)
+	m.cfg.Remotes[remote] = rc
+	return m.save()
+}
+
+func (m *Manager) GetForwards(remote string) map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res := make(map[string]string)
+	for k, v := range m.cfg.Remotes[remote].Forwards {
+		res[k] = v
+	}
+	return res
 }
 
 func (m *Manager) save() error {
