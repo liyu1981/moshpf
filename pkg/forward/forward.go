@@ -16,6 +16,7 @@ import (
 type Forwarder struct {
 	session    *tunnel.Session
 	remoteName string
+	masterIP   string
 	nextID     uint32
 	listeners  map[uint16]net.Listener
 	forwards   map[uint16]protocol.ForwardEntry
@@ -28,6 +29,7 @@ func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Ma
 	return &Forwarder{
 		session:    session,
 		remoteName: remoteName,
+		masterIP:   protocol.GetLocalIP(),
 		state:      stateMgr,
 		target:     target,
 		listeners:  make(map[uint16]net.Listener),
@@ -39,6 +41,12 @@ func (f *Forwarder) GetRemoteName() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.remoteName
+}
+
+func (f *Forwarder) GetMasterIP() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.masterIP
 }
 
 func (f *Forwarder) SetSession(session *tunnel.Session) {

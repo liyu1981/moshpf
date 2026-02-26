@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/gob"
+	"net"
 	"os"
 	"strconv"
 )
@@ -55,7 +56,8 @@ type ForwardEntry struct {
 }
 
 type ListResponse struct {
-	Entries []ForwardEntry
+	Entries  []ForwardEntry
+	MasterIP string
 }
 
 type CloseRequest struct {
@@ -96,4 +98,19 @@ func Register() {
 
 func GetUnixSocketPath() string {
 	return "/tmp/mpf-" + strconv.Itoa(os.Getuid()) + ".sock"
+}
+
+func GetLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, address := range addrs {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return "127.0.0.1"
 }

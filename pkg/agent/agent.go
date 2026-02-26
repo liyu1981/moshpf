@@ -18,7 +18,7 @@ import (
 
 type Agent struct {
 	session    *tunnel.Session
-	listChan   chan []protocol.ForwardEntry
+	listChan   chan protocol.ListResponse
 	closeChan  chan protocol.CloseResponse
 	listenChan chan protocol.ListenResponse
 }
@@ -39,7 +39,7 @@ func Run() error {
 
 	a := &Agent{
 		session:    session,
-		listChan:   make(chan []protocol.ForwardEntry),
+		listChan:   make(chan protocol.ListResponse),
 		closeChan:  make(chan protocol.CloseResponse),
 		listenChan: make(chan protocol.ListenResponse),
 	}
@@ -88,7 +88,7 @@ func Run() error {
 			log.Info().Str("host", m.Host).Uint16("port", m.Port).Msg("Forward request received")
 			go handleForward(session, m)
 		case protocol.ListResponse:
-			a.listChan <- m.Entries
+			a.listChan <- m
 		case protocol.ListenResponse:
 			if m.Success {
 				log.Info().Uint16("port", m.RemotePort).Msg("Forwarding confirmed by daemon")
@@ -176,9 +176,9 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		}
 
 		select {
-		case entries := <-a.listChan:
+		case resp := <-a.listChan:
 			res := ""
-			for i, e := range entries {
+			for i, e := range resp.Entries {
 				if i > 0 {
 					res += "\n"
 				}
@@ -186,7 +186,15 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 				if e.Error != "" {
 					status = "ERROR: " + e.Error
 				}
-				res += fmt.Sprintf("Local %s -> Remote %s:%d (%s)", e.LocalAddr, e.RemoteHost, e.RemotePort, status)
+
+				localAddr := e.LocalAddr
+				if strings.HasPrefix(localAddr, ":") {
+					localAddr = resp.MasterIP + " " + localAddr[1:]
+				} else if strings.Contains(localAddr, ":") {
+					localAddr = strings.Replace(localAddr, ":", " ", 1)
+				}
+
+				res += fmt.Sprintf("%d -> %s (%s)", e.RemotePort, localAddr, status)
 			}
 			_, _ = conn.Write([]byte(res))
 		case <-time.After(5 * time.Second):

@@ -177,7 +177,8 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 				_ = tSession.Send(resp)
 			case protocol.ListRequest:
 				_ = tSession.Send(protocol.ListResponse{
-					Entries: fwd.GetForwardEntries(),
+					Entries:  fwd.GetForwardEntries(),
+					MasterIP: fwd.GetMasterIP(),
 				})
 			case protocol.CloseRequest:
 				log.Info().
