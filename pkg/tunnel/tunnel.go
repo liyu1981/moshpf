@@ -11,10 +11,11 @@ import (
 )
 
 type Session struct {
-	Yamux   *yamux.Session
-	Control *gob.Encoder
-	Decoder *gob.Decoder
-	mu      sync.Mutex
+	Yamux        *yamux.Session
+	Control      *gob.Encoder
+	Decoder      *gob.Decoder
+	mu           sync.Mutex
+	lastReceived time.Time
 }
 
 func NewSession(conn io.ReadWriteCloser, server bool) (*Session, error) {
@@ -44,9 +45,10 @@ func NewSession(conn io.ReadWriteCloser, server bool) (*Session, error) {
 	}
 
 	return &Session{
-		Yamux:   ySession,
-		Control: gob.NewEncoder(controlStream),
-		Decoder: gob.NewDecoder(controlStream),
+		Yamux:        ySession,
+		Control:      gob.NewEncoder(controlStream),
+		Decoder:      gob.NewDecoder(controlStream),
+		lastReceived: time.Now(),
 	}, nil
 }
 
@@ -59,6 +61,11 @@ func (s *Session) Send(msg protocol.Message) error {
 func (s *Session) Receive() (protocol.Message, error) {
 	var msg protocol.Message
 	err := s.Decoder.Decode(&msg)
+	if err == nil {
+		s.mu.Lock()
+		s.lastReceived = time.Now()
+		s.mu.Unlock()
+	}
 	return msg, err
 }
 
@@ -69,6 +76,16 @@ func (s *Session) StartHeartbeat(stop chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
+			s.mu.Lock()
+			last := s.lastReceived
+			s.mu.Unlock()
+
+			if time.Since(last) > 35*time.Second {
+				// 3 heartbeats missed (30s) + 5s buffer
+				s.Yamux.Close()
+				return
+			}
+
 			if err := s.Send(protocol.Heartbeat{}); err != nil {
 				return
 			}

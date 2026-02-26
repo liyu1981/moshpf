@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
 )
 
@@ -18,16 +19,32 @@ type Forwarder struct {
 	nextID     uint32
 	listeners  map[uint16]net.Listener
 	forwards   map[uint16]protocol.ForwardEntry
+	state      *state.Manager
+	target     string // user@host
 	mu         sync.Mutex
 }
 
-func NewForwarder(session *tunnel.Session, remoteName string) *Forwarder {
+func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Manager, target string) *Forwarder {
 	return &Forwarder{
 		session:    session,
 		remoteName: remoteName,
+		state:      stateMgr,
+		target:     target,
 		listeners:  make(map[uint16]net.Listener),
 		forwards:   make(map[uint16]protocol.ForwardEntry),
 	}
+}
+
+func (f *Forwarder) GetRemoteName() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.remoteName
+}
+
+func (f *Forwarder) SetSession(session *tunnel.Session) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.session = session
 }
 
 func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16) error {
@@ -45,6 +62,10 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		f.forwards[remotePort] = entry
 		f.mu.Unlock()
 		return err
+	}
+
+	if f.state != nil {
+		_ = f.state.AddForward(f.target, fmt.Sprintf("%d", remotePort))
 	}
 
 	displayHost := remoteHost
@@ -92,6 +113,9 @@ func (f *Forwarder) CloseForward(port uint16) bool {
 		ln.Close()
 		delete(f.listeners, port)
 		delete(f.forwards, port)
+		if f.state != nil {
+			_ = f.state.RemoveForward(f.target, fmt.Sprintf("%d", port))
+		}
 		log.Info().
 			Str("remote", f.remoteName).
 			Uint16("port", port).

@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/liyu1981/moshpf/pkg/forward"
 	"github.com/liyu1981/moshpf/pkg/mosh"
 	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
 )
 
@@ -18,6 +20,57 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	}
 
 	target := args[0]
+	
+	stateMgr, err := state.NewManager()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize state manager")
+	}
+
+	remoteHostname := target
+	for i := 0; i < len(target); i++ {
+		if target[i] == '@' {
+			remoteHostname = target[i+1:]
+			break
+		}
+	}
+
+	fwd := forward.NewForwarder(nil, remoteHostname, stateMgr, target)
+
+	// Start the session for port forwarding
+	go func() {
+		// Initial restore from state
+		if stateMgr != nil {
+			for _, pStr := range stateMgr.GetForwards(target) {
+				var p uint16
+				fmt.Sscanf(pStr, "%d", &p)
+				if p > 0 {
+					_ = fwd.ListenAndForward(fmt.Sprintf(":%d", p), "localhost", p)
+				}
+			}
+		}
+
+		backoff := 1 * time.Second
+		for {
+			err := runSession(target, remoteBinaryPath, isDev, fwd)
+			if err != nil {
+				log.Error().Err(err).Msg("Session failed, reconnecting...")
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+				continue
+			}
+			// If runSession returns nil, it means graceful shutdown or deliberate exit
+			return
+		}
+	}()
+
+	// Run mosh in child
+	return mosh.Run(args, isDev)
+}
+
+func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward.Forwarder) error {
 	client, err := Connect(target)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
@@ -51,7 +104,6 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 
 	go io.Copy(os.Stderr, stderr)
 
-	log.Info().Str("path", remotePath).Msg("Starting remote agent")
 	agentCmd := fmt.Sprintf("%s agent", remotePath)
 	if err := session.Start(agentCmd); err != nil {
 		return err
@@ -66,6 +118,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	if err != nil {
 		return err
 	}
+	fwd.SetSession(tSession)
 
 	if err := tSession.Send(protocol.Hello{Version: protocol.Version}); err != nil {
 		return err
@@ -82,23 +135,22 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 
 	log.Info().Msg("Tunnel established")
 
-	remoteHostname := target
-	for i := 0; i < len(target); i++ {
-		if target[i] == '@' {
-			remoteHostname = target[i+1:]
-			break
-		}
-	}
+	stopHeartbeat := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	go func() {
+		tSession.StartHeartbeat(stopHeartbeat)
+		close(heartbeatDone)
+	}()
 
-	fwd := forward.NewForwarder(tSession, remoteHostname)
+	remoteHostname := fwd.GetRemoteName()
 
+	// Main loop
+	errChan := make(chan error, 1)
 	go func() {
 		for {
 			msg, err := tSession.Receive()
 			if err != nil {
-				if err != io.EOF {
-					log.Error().Err(err).Msg("Session receive error")
-				}
+				errChan <- err
 				return
 			}
 
@@ -137,17 +189,21 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 					Success: success,
 				})
 			case protocol.Shutdown:
+				errChan <- nil
 				return
 			}
 		}
 	}()
 
-	stopHeartbeat := make(chan struct{})
-	go tSession.StartHeartbeat(stopHeartbeat)
-	defer close(stopHeartbeat)
-
-	// Phase 4: Run mosh
-	return mosh.Run(args, isDev)
+	select {
+	case err := <-errChan:
+		close(stopHeartbeat)
+		<-heartbeatDone
+		return err
+	case <-heartbeatDone:
+		// Heartbeat detected failure
+		return fmt.Errorf("heartbeat timeout")
+	}
 }
 
 type sessionConn struct {
