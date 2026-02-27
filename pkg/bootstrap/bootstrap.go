@@ -18,6 +18,7 @@ import (
 	"github.com/liyu1981/moshpf/pkg/tunnel"
 	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/ssh"
 )
 
 func Run(args []string, remoteBinaryPath string, isDev bool) error {
@@ -40,6 +41,38 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 		}
 	}
 
+	// 1. Initial Local Check
+	localBuf, err := tunnel.GetUDPBufferInfo()
+	if err == nil {
+		if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
+			fmt.Print(warn)
+			fmt.Print("Press Enter to continue anyway...")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}
+	}
+
+	// 2. Initial Remote Check & Deployment (Synchronous)
+	client, err := Connect(target)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %v", err)
+	}
+
+	remotePath, err := DeployAgent(client, remoteBinaryPath, isDev)
+	if err != nil {
+		client.Close()
+		return fmt.Errorf("failed to deploy agent: %v", err)
+	}
+
+	rmem, wmem, err := GetRemoteUDPBufferInfo(client)
+	if err == nil {
+		remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
+		if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
+			fmt.Print(warn)
+			fmt.Print("Press Enter to continue anyway...")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}
+	}
+
 	fwd := forward.NewForwarder(nil, remoteHostname, stateMgr, target)
 
 	// Start the session for port forwarding
@@ -56,6 +89,12 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 			}
 		}
 
+		// Initial session using the already established client
+		err := runSessionWithClient(client, remotePath, target, fwd)
+		if err != nil {
+			log.Error().Err(err).Msg("Initial session failed, reconnecting...")
+		}
+
 		backoff := 1 * time.Second
 		for {
 			err := runSession(target, remoteBinaryPath, isDev, fwd)
@@ -68,7 +107,6 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 				}
 				continue
 			}
-			// If runSession returns nil, it means graceful shutdown or deliberate exit
 			return
 		}
 	}()
@@ -88,27 +126,10 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 	if err != nil {
 		return fmt.Errorf("failed to deploy agent: %v", err)
 	}
-	log.Info().Str("path", remotePath).Msg("Remote binary found/deployed")
+	return runSessionWithClient(client, remotePath, target, fwd)
+}
 
-	// Check UDP buffers for QUIC
-	localBuf, err := tunnel.GetUDPBufferInfo()
-	if err == nil {
-		if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
-			fmt.Print(warn)
-			fmt.Print("Press Enter to continue anyway...")
-			bufio.NewReader(os.Stdin).ReadString('\n')
-		}
-	}
-	rmem, wmem, err := GetRemoteUDPBufferInfo(client)
-	if err == nil {
-		remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
-		if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
-			fmt.Print(warn)
-			fmt.Print("Press Enter to continue anyway...")
-			bufio.NewReader(os.Stdin).ReadString('\n')
-		}
-	}
-
+func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *forward.Forwarder) error {
 	session, err := client.NewSession()
 	if err != nil {
 		return err
@@ -291,6 +312,7 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 		return err
 	}
 }
+
 
 type sessionConn struct {
 	stdin  io.WriteCloser
