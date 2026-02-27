@@ -17,21 +17,13 @@ type Hello struct {
 
 type HelloAck struct {
 	Version string
+	UDPPort uint16
+	TLSHash string
 }
 
-type ForwardRequest struct {
-	ID   uint32
+type StreamHeader struct {
 	Host string
 	Port uint16
-}
-
-type ForwardAck struct {
-	ID uint32
-}
-
-type ForwardErr struct {
-	ID     uint32
-	Reason string
 }
 
 type ListenRequest struct {
@@ -52,6 +44,7 @@ type ForwardEntry struct {
 	LocalAddr  string
 	RemoteHost string
 	RemotePort uint16
+	Transport  string
 	Error      string
 }
 
@@ -81,9 +74,7 @@ type Shutdown struct {
 func Register() {
 	gob.Register(Hello{})
 	gob.Register(HelloAck{})
-	gob.Register(ForwardRequest{})
-	gob.Register(ForwardAck{})
-	gob.Register(ForwardErr{})
+	gob.Register(StreamHeader{})
 	gob.Register(ListenRequest{})
 	gob.Register(ListenResponse{})
 	gob.Register(ListRequest{})
