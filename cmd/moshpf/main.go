@@ -13,6 +13,14 @@ import (
 
 const Version = "dev"
 
+const (
+	m      = "\033[35mm\033[0m" // Magenta
+	p      = "\033[36mp\033[0m" // Cyan
+	f      = "\033[32mf\033[0m" // Green
+	mpf    = "\033[1mmpf\033[0m"
+	github = "https://github.com/liyu1981/moshpf"
+)
+
 func main() {
 	logger.Init()
 
@@ -48,7 +56,8 @@ func main() {
 
 	switch cmd {
 	case "version":
-		fmt.Printf("mpf version %s (protocol version %s)\n", Version, protocol.Version)
+		fmt.Printf("%s (%sosh %sort %sorward) version %s (protocol %s)\n", mpf, m, p, f, Version, protocol.Version)
+		fmt.Printf("Source: %s\n", github)
 	case "agent":
 		if err := agent.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
@@ -118,7 +127,8 @@ func printMoshUsage() {
 }
 
 func printUsage() {
-	fmt.Println("Usage: mpf [flags] <command> [args]")
+	fmt.Printf("%s (%sosh %sort %sorward) - %s\n", mpf, m, p, f, github)
+	fmt.Println("\nUsage: mpf [flags] <command> [args]")
 	fmt.Println("\nFlags:")
 	fmt.Println("  --quic          Use QUIC transport only")
 	fmt.Println("                  (Default: try QUIC, fallback to TCP)")
