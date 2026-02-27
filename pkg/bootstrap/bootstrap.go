@@ -344,7 +344,6 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 	}
 }
 
-
 type sessionConn struct {
 	stdin  io.WriteCloser
 	stdout io.Reader

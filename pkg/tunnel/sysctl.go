@@ -52,13 +52,17 @@ func GetBufferWarning(side string, info UDPBufferInfo) string {
 	if info.IsOptimal() {
 		return ""
 	}
-	msg := fmt.Sprintf("\r\nWARNING: UDP buffer size on %s side is below optimal for QUIC.\r\n", side)
-	msg += fmt.Sprintf("Current: rmem_max=%d, wmem_max=%d\r\n", info.RMemMax, info.WMemMax)
-	msg += fmt.Sprintf("Recommended: at least %d\r\n", MinBufferBytes)
-	msg += "To fix this, run the following commands with sudo:\r\n"
-	msg += fmt.Sprintf("  sudo sysctl -w net.core.rmem_max=%d\r\n", MinBufferBytes)
-	msg += fmt.Sprintf("  sudo sysctl -w net.core.wmem_max=%d\r\n", MinBufferBytes)
-	msg += "Documentation: https://github.com/liyu1981/moshpf/wiki/quic-buffer.md\r\n"
+	const (
+		yellow = "\033[33m"
+		cyan   = "\033[36m"
+		reset  = "\033[0m"
+		bold   = "\033[1m"
+	)
+
+	msg := fmt.Sprintf("\r\n%s%sWARNING: UDP buffer size on %s side is below optimal for QUIC.%s\r\n", bold, yellow, side, reset)
+	msg += fmt.Sprintf("Current: %srmem_max=%d, wmem_max=%d%s\r\n", cyan, info.RMemMax, info.WMemMax, reset)
+	msg += fmt.Sprintf("Recommended: at least %s%d%s\r\n", bold, MinBufferBytes, reset)
+	msg += fmt.Sprintf("Documentation: %shttps://github.com/liyu1981/moshpf/wiki/quic-buffer.md%s\r\n", cyan, reset)
 	msg += "Press Enter to continue anyway, or Esc to exit..."
 	return msg
 }
