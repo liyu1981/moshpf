@@ -15,11 +15,19 @@ import (
 
 func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, error) {
 	if strings.HasPrefix(remotePath, "~/") {
-		// Basic home expansion
-		remotePath = ".local/bin/mpf" // Assume relative to home if it starts with ~/
+		remotePath = strings.TrimPrefix(remotePath, "~/")
 	}
 
 	shouldDeploy := force
+
+	if shouldDeploy {
+		// In dev/force mode, try to stop the existing agent first to avoid "text file busy"
+		session, err := client.NewSession()
+		if err == nil {
+			_ = session.Run(fmt.Sprintf("./%s stop", remotePath))
+			session.Close()
+		}
+	}
 
 	if !shouldDeploy {
 		// Check version
@@ -32,10 +40,10 @@ func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, err
 		var b bytes.Buffer
 		session.Stdout = &b
 		// Try to get version. If it fails, we assume it's not installed or broken.
-		err = session.Run(fmt.Sprintf("%s version", remotePath))
+		err = session.Run(fmt.Sprintf("./%s version", remotePath))
 		installedVersion := strings.TrimSpace(b.String())
 
-		if err != nil || installedVersion != protocol.Version {
+		if err != nil || !strings.Contains(installedVersion, protocol.Version) {
 			shouldDeploy = true
 		}
 	}

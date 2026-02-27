@@ -1,1 +1,2 @@
-The program operates in two modes: a local master process and a remote slave process.
+- The program operates in two modes: a local master process and a remote slave process.
+- Before git commit, should run `go fmt ./...` and fix errors if there are.

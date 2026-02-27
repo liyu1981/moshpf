@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"encoding/gob"
 	"io"
 	"sync"
@@ -8,10 +9,58 @@ import (
 
 	"github.com/hashicorp/yamux"
 	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/quic-go/quic-go"
 )
 
+type Multiplexer interface {
+	OpenStream() (io.ReadWriteCloser, error)
+	AcceptStream() (io.ReadWriteCloser, error)
+	Close() error
+	Type() string
+}
+
+type YamuxMultiplexer struct {
+	Session *yamux.Session
+}
+
+func (y *YamuxMultiplexer) Type() string {
+	return "TCP"
+}
+
+func (y *YamuxMultiplexer) OpenStream() (io.ReadWriteCloser, error) {
+	return y.Session.Open()
+}
+
+func (y *YamuxMultiplexer) AcceptStream() (io.ReadWriteCloser, error) {
+	return y.Session.Accept()
+}
+
+func (y *YamuxMultiplexer) Close() error {
+	return y.Session.Close()
+}
+
+type QuicMultiplexer struct {
+	Conn *quic.Conn
+}
+
+func (q *QuicMultiplexer) Type() string {
+	return "QUIC"
+}
+
+func (q *QuicMultiplexer) OpenStream() (io.ReadWriteCloser, error) {
+	return q.Conn.OpenStreamSync(context.Background())
+}
+
+func (q *QuicMultiplexer) AcceptStream() (io.ReadWriteCloser, error) {
+	return q.Conn.AcceptStream(context.Background())
+}
+
+func (q *QuicMultiplexer) Close() error {
+	return q.Conn.CloseWithError(0, "")
+}
+
 type Session struct {
-	Yamux        *yamux.Session
+	Mux          Multiplexer
 	Control      *gob.Encoder
 	Decoder      *gob.Decoder
 	mu           sync.Mutex
@@ -32,20 +81,48 @@ func NewSession(conn io.ReadWriteCloser, server bool) (*Session, error) {
 		return nil, err
 	}
 
+	mux := &YamuxMultiplexer{Session: ySession}
+
 	// Open stream 0 for control
 	var controlStream io.ReadWriteCloser
 	if server {
-		controlStream, err = ySession.Accept()
+		controlStream, err = mux.AcceptStream()
 	} else {
-		controlStream, err = ySession.Open()
+		controlStream, err = mux.OpenStream()
 	}
 	if err != nil {
-		ySession.Close()
+		mux.Close()
 		return nil, err
 	}
 
 	return &Session{
-		Yamux:        ySession,
+		Mux:          mux,
+		Control:      gob.NewEncoder(controlStream),
+		Decoder:      gob.NewDecoder(controlStream),
+		lastReceived: time.Now(),
+	}, nil
+}
+
+func NewQuicSession(qConn *quic.Conn, server bool) (*Session, error) {
+	protocol.Register()
+
+	mux := &QuicMultiplexer{Conn: qConn}
+
+	// Open stream 0 for control
+	var controlStream io.ReadWriteCloser
+	var err error
+	if server {
+		controlStream, err = mux.AcceptStream()
+	} else {
+		controlStream, err = mux.OpenStream()
+	}
+	if err != nil {
+		mux.Close()
+		return nil, err
+	}
+
+	return &Session{
+		Mux:          mux,
 		Control:      gob.NewEncoder(controlStream),
 		Decoder:      gob.NewDecoder(controlStream),
 		lastReceived: time.Now(),
@@ -82,7 +159,7 @@ func (s *Session) StartHeartbeat(stop chan struct{}) {
 
 			if time.Since(last) > 35*time.Second {
 				// 3 heartbeats missed (30s) + 5s buffer
-				s.Yamux.Close()
+				s.Mux.Close()
 				return
 			}
 
