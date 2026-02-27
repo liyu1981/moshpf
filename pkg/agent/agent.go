@@ -352,6 +352,10 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		case <-time.After(5 * time.Second):
 			_, _ = conn.Write([]byte("ERROR: Timeout waiting for list response"))
 		}
+	} else if cmd == "STOP" {
+		log.Info().Msg("Stop command received, shutting down")
+		_, _ = conn.Write([]byte("Stopping agent..."))
+		os.Exit(0)
 	} else if strings.HasPrefix(cmd, "CLOSE:") {
 		portStr := strings.TrimPrefix(cmd, "CLOSE:")
 		port, err := strconv.ParseUint(portStr, 10, 16)

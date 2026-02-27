@@ -62,6 +62,15 @@ func main() {
 		if resp != "" {
 			fmt.Println(resp)
 		}
+	case "stop":
+		resp, err := sendToAgent("STOP")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
+			os.Exit(1)
+		}
+		if resp != "" {
+			fmt.Println(resp)
+		}
 	case "mosh":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: mpf mosh [user@]host")
@@ -85,6 +94,7 @@ func printUsage() {
 	fmt.Println("  forward <port>  Request port forward from an active session")
 	fmt.Println("  close <port>    Close an active port forward")
 	fmt.Println("  list            List active port forwards")
+	fmt.Println("  stop            Stop the active agent")
 	fmt.Println("  mosh <args>     Start a mosh session with port forwarding")
 	fmt.Println("  version         Show version")
 }

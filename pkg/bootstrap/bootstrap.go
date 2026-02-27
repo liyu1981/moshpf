@@ -110,7 +110,7 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 
 	go io.Copy(os.Stderr, stderr)
 
-	agentCmd := fmt.Sprintf("%s agent", remotePath)
+	agentCmd := fmt.Sprintf("./%s agent", remotePath)
 	if err := session.Start(agentCmd); err != nil {
 		return err
 	}
