@@ -32,7 +32,7 @@ jobs:
           VERSION=${{ github.ref_name }}
           # Remove 'v' prefix if present
           CLEAN_VERSION=$(echo $VERSION | sed 's/^v//')
-          sed -i "s/const Version = \"dev\"/const Version = \"$CLEAN_VERSION\"/" cmd/moshpf/main.go
+          sed -i "s/const Version = \"dev\"/const Version = \"$CLEAN_VERSION\"/" pkg/protocol/protocol.go
 
       - name: Set up Go
         uses: actions/setup-go@v5

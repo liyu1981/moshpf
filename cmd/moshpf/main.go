@@ -11,8 +11,6 @@ import (
 	"github.com/liyu1981/moshpf/pkg/protocol"
 )
 
-const Version = "dev"
-
 const (
 	m      = "\033[35mm\033[0m" // Magenta
 	p      = "\033[36mp\033[0m" // Cyan
@@ -56,7 +54,8 @@ func main() {
 
 	switch cmd {
 	case "version":
-		fmt.Printf("%s (%sosh %sort %sorward) \n%s\nversion %s (protocol %s)\n", mpf, m, p, f, github, Version, protocol.Version)
+		fmt.Printf("%s (%sosh %sort %sorward) version %s\n", mpf, m, p, f, protocol.Version)
+		fmt.Printf("Source: %s\n", github)
 	case "agent":
 		if err := agent.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)

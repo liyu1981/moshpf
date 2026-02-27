@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-const Version = "0.1.0"
+const Version = "dev"
 
 type Message interface{}
 
