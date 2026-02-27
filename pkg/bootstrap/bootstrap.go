@@ -1,9 +1,13 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/liyu1981/moshpf/pkg/forward"
@@ -11,6 +15,7 @@ import (
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
 )
 
@@ -119,7 +124,7 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 	if err != nil {
 		return err
 	}
-	fwd.SetSession(tSession)
+	fwd.AddSession(tSession)
 
 	if err := tSession.Send(protocol.Hello{Version: protocol.Version}); err != nil {
 		return err
@@ -130,81 +135,140 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 		return err
 	}
 
-	if ack, ok := msg.(protocol.HelloAck); !ok || ack.Version != protocol.Version {
+	ack, ok := msg.(protocol.HelloAck)
+	if !ok || ack.Version != protocol.Version {
 		return fmt.Errorf("failed handshake or version mismatch")
 	}
 
 	log.Info().Msg("Tunnel established")
 
-	stopHeartbeat := make(chan struct{})
-	heartbeatDone := make(chan struct{})
-	go func() {
-		tSession.StartHeartbeat(stopHeartbeat)
-		close(heartbeatDone)
-	}()
-
+	sessions := make(map[*tunnel.Session]chan struct{})
+	var sessionsMu sync.Mutex
+	errChan := make(chan error, 1)
 	remoteHostname := fwd.GetRemoteName()
 
-	// Main loop
-	errChan := make(chan error, 1)
-	go func() {
-		for {
-			msg, err := tSession.Receive()
+	addSession := func(s *tunnel.Session) {
+		sessionsMu.Lock()
+		defer sessionsMu.Unlock()
+		stop := make(chan struct{})
+		sessions[s] = stop
+		go func() {
+			s.StartHeartbeat(stop)
+		}()
+		go func() {
+			for {
+				msg, err := s.Receive()
+				if err != nil {
+					sessionsMu.Lock()
+					if _, ok := sessions[s]; ok {
+						delete(sessions, s)
+						fwd.RemoveSession(s)
+						close(stop)
+					}
+					isPrimary := (len(sessions) == 0)
+					sessionsMu.Unlock()
+					if isPrimary {
+						errChan <- err
+					}
+					return
+				}
+
+				log.Debug().Type("type", msg).Msg("Master received message")
+
+				switch m := msg.(type) {
+				case protocol.Heartbeat:
+					_ = s.Send(protocol.HeartbeatAck{})
+				case protocol.HeartbeatAck:
+					// OK
+				case protocol.ListenRequest:
+					log.Info().
+						Str("local", m.LocalAddr).
+						Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
+						Msg("Dynamic listen request received")
+					err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort)
+					resp := protocol.ListenResponse{
+						RemotePort: m.RemotePort,
+						Success:    err == nil,
+					}
+					if err != nil {
+						log.Error().Err(err).Msg("Failed to handle dynamic listen request")
+						resp.Reason = err.Error()
+					}
+					_ = s.Send(resp)
+				case protocol.ListRequest:
+					entries := fwd.GetForwardEntries()
+					masterIP := fwd.GetMasterIP()
+					err := s.Send(protocol.ListResponse{
+						Entries:  entries,
+						MasterIP: masterIP,
+					})
+					if err != nil {
+						log.Error().Err(err).Msg("Master failed to send ListResponse")
+					}
+				case protocol.CloseRequest:
+					log.Info().
+						Str("remote", remoteHostname).
+						Uint16("port", m.Port).
+						Msg("Close request received")
+					success := fwd.CloseForward(m.Port)
+					_ = s.Send(protocol.CloseResponse{
+						Port:    m.Port,
+						Success: success,
+					})
+				case protocol.Shutdown:
+					errChan <- nil
+					return
+				}
+			}
+		}()
+	}
+
+	addSession(tSession)
+
+	// Attempt QUIC if available
+	if ack.UDPPort > 0 && ack.TLSHash != "" {
+		go func() {
+			remoteHost := target
+			if i := strings.Index(remoteHost, "@"); i != -1 {
+				remoteHost = remoteHost[i+1:]
+			}
+			if h, _, err := net.SplitHostPort(remoteHost); err == nil {
+				remoteHost = h
+			}
+
+			log.Info().Str("host", remoteHost).Uint16("port", ack.UDPPort).Msg("Attempting QUIC upgrade")
+			tlsConf := tunnel.GetTLSConfigClient(ack.TLSHash)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			qConn, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", remoteHost, ack.UDPPort), tlsConf, nil)
 			if err != nil {
-				errChan <- err
+				log.Warn().Err(err).Msg("QUIC upgrade failed, staying on TCP")
 				return
 			}
 
-			switch m := msg.(type) {
-			case protocol.Heartbeat:
-				_ = tSession.Send(protocol.HeartbeatAck{})
-			case protocol.HeartbeatAck:
-				// OK
-			case protocol.ListenRequest:
-				log.Info().
-					Str("local", m.LocalAddr).
-					Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
-					Msg("Dynamic listen request received")
-				err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort)
-				resp := protocol.ListenResponse{
-					RemotePort: m.RemotePort,
-					Success:    err == nil,
-				}
-				if err != nil {
-					log.Error().Err(err).Msg("Failed to handle dynamic listen request")
-					resp.Reason = err.Error()
-				}
-				_ = tSession.Send(resp)
-			case protocol.ListRequest:
-				_ = tSession.Send(protocol.ListResponse{
-					Entries:  fwd.GetForwardEntries(),
-					MasterIP: fwd.GetMasterIP(),
-				})
-			case protocol.CloseRequest:
-				log.Info().
-					Str("remote", remoteHostname).
-					Uint16("port", m.Port).
-					Msg("Close request received")
-				success := fwd.CloseForward(m.Port)
-				_ = tSession.Send(protocol.CloseResponse{
-					Port:    m.Port,
-					Success: success,
-				})
-			case protocol.Shutdown:
-				errChan <- nil
+			qSession, err := tunnel.NewQuicSession(qConn, false)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to create QUIC session")
+				qConn.CloseWithError(0, "")
 				return
 			}
-		}
-	}()
+
+			log.Info().Msg("QUIC upgrade successful")
+			fwd.AddSession(qSession)
+			addSession(qSession)
+		}()
+	}
 
 	select {
 	case err := <-errChan:
-		close(stopHeartbeat)
-		<-heartbeatDone
+		sessionsMu.Lock()
+		for s, stop := range sessions {
+			close(stop)
+			s.Mux.Close()
+		}
+		sessionsMu.Unlock()
 		return err
-	case <-heartbeatDone:
-		// Heartbeat detected failure
-		return fmt.Errorf("heartbeat timeout")
 	}
 }
 

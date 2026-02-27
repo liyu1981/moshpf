@@ -1,11 +1,11 @@
 package forward
 
 import (
+	"encoding/gob"
 	"fmt"
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
@@ -14,7 +14,7 @@ import (
 )
 
 type Forwarder struct {
-	session    *tunnel.Session
+	sessions   []*tunnel.Session
 	remoteName string
 	masterIP   string
 	nextID     uint32
@@ -26,8 +26,7 @@ type Forwarder struct {
 }
 
 func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Manager, target string) *Forwarder {
-	return &Forwarder{
-		session:    session,
+	f := &Forwarder{
 		remoteName: remoteName,
 		masterIP:   protocol.GetLocalIP(),
 		state:      stateMgr,
@@ -35,6 +34,10 @@ func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Ma
 		listeners:  make(map[uint16]net.Listener),
 		forwards:   make(map[uint16]protocol.ForwardEntry),
 	}
+	if session != nil {
+		f.sessions = append(f.sessions, session)
+	}
+	return f
 }
 
 func (f *Forwarder) GetRemoteName() string {
@@ -49,10 +52,41 @@ func (f *Forwarder) GetMasterIP() string {
 	return f.masterIP
 }
 
-func (f *Forwarder) SetSession(session *tunnel.Session) {
+func (f *Forwarder) AddSession(session *tunnel.Session) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.session = session
+	f.sessions = append(f.sessions, session)
+}
+
+func (f *Forwarder) RemoveSession(session *tunnel.Session) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, s := range f.sessions {
+		if s == session {
+			f.sessions = append(f.sessions[:i], f.sessions[i+1:]...)
+			break
+		}
+	}
+}
+
+func (f *Forwarder) getBestSession() *tunnel.Session {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getBestSessionLocked()
+}
+
+func (f *Forwarder) getBestSessionLocked() *tunnel.Session {
+	var best *tunnel.Session
+	for _, s := range f.sessions {
+		if best == nil {
+			best = s
+			continue
+		}
+		if _, ok := s.Mux.(*tunnel.QuicMultiplexer); ok {
+			best = s
+		}
+	}
+	return best
 }
 
 func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16) error {
@@ -152,8 +186,16 @@ func (f *Forwarder) CloseForward(masterPort uint16) bool {
 func (f *Forwarder) GetForwardEntries() []protocol.ForwardEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	transport := "NONE"
+	s := f.getBestSessionLocked()
+	if s != nil {
+		transport = s.Mux.Type()
+	}
+
 	entries := make([]protocol.ForwardEntry, 0, len(f.forwards))
 	for _, e := range f.forwards {
+		e.Transport = transport
 		entries = append(entries, e)
 	}
 	return entries
@@ -162,24 +204,37 @@ func (f *Forwarder) GetForwardEntries() []protocol.ForwardEntry {
 func (f *Forwarder) handleConnection(localConn net.Conn, remoteHost string, remotePort uint16) {
 	defer localConn.Close()
 
-	id := atomic.AddUint32(&f.nextID, 1)
+	s := f.getBestSession()
+	if s == nil {
+		log.Error().Msg("No active session for forwarding")
+		return
+	}
 
-	err := f.session.Send(protocol.ForwardRequest{
-		ID:   id,
+	remoteConn, err := s.Mux.OpenStream()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to open multiplexer stream")
+		return
+	}
+	defer remoteConn.Close()
+
+	// Send header directly on the stream
+	encoder := gob.NewEncoder(remoteConn)
+	err = encoder.Encode(protocol.StreamHeader{
 		Host: remoteHost,
 		Port: remotePort,
 	})
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to send forward request")
+		log.Error().Err(err).Msg("Failed to send stream header")
 		return
 	}
 
-	remoteConn, err := f.session.Yamux.Open()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to open yamux stream")
+	// Wait for 1-byte ACK (1 = success, 0 = fail)
+	ack := make([]byte, 1)
+	_, err = remoteConn.Read(ack)
+	if err != nil || ack[0] != 1 {
+		log.Error().Err(err).Msg("Failed to get stream ACK")
 		return
 	}
-	defer remoteConn.Close()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
