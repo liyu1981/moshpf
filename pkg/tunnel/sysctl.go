@@ -59,5 +59,6 @@ func GetBufferWarning(side string, info UDPBufferInfo) string {
 	msg += fmt.Sprintf("  sudo sysctl -w net.core.rmem_max=%d\n", MinBufferBytes)
 	msg += fmt.Sprintf("  sudo sysctl -w net.core.wmem_max=%d\n", MinBufferBytes)
 	msg += "Documentation: https://github.com/liyu1981/moshpf/wiki/quic-buffer.md\n"
+	msg += "Press Enter to continue anyway, or Esc to exit..."
 	return msg
 }

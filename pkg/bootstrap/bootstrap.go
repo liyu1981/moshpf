@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -19,7 +18,37 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
+
+func waitEnterOrEsc() error {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return nil
+	}
+
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return err
+	}
+	defer term.Restore(fd, state)
+
+	buf := make([]byte, 1)
+	for {
+		_, err := os.Stdin.Read(buf)
+		if err != nil {
+			return err
+		}
+		if buf[0] == '\r' || buf[0] == '\n' {
+			fmt.Print("\n")
+			return nil
+		}
+		if buf[0] == 0x1b { // Esc
+			fmt.Print("\nAborted by user\n")
+			os.Exit(0)
+		}
+	}
+}
 
 func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	if len(args) < 1 {
@@ -46,8 +75,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	if err == nil {
 		if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
 			fmt.Print(warn)
-			fmt.Print("Press Enter to continue anyway...")
-			bufio.NewReader(os.Stdin).ReadString('\n')
+			_ = waitEnterOrEsc()
 		}
 	}
 
@@ -68,8 +96,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 		remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
 		if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
 			fmt.Print(warn)
-			fmt.Print("Press Enter to continue anyway...")
-			bufio.NewReader(os.Stdin).ReadString('\n')
+			_ = waitEnterOrEsc()
 		}
 	}
 
