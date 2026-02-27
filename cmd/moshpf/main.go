@@ -17,7 +17,7 @@ const (
 	m      = "\033[35mm\033[0m" // Magenta
 	p      = "\033[36mp\033[0m" // Cyan
 	f      = "\033[32mf\033[0m" // Green
-	mpf    = "\033[1mmpf\033[0m"
+	mpf    = m + p + f
 	github = "https://github.com/liyu1981/moshpf"
 )
 
@@ -56,8 +56,7 @@ func main() {
 
 	switch cmd {
 	case "version":
-		fmt.Printf("%s (%sosh %sort %sorward) version %s (protocol %s)\n", mpf, m, p, f, Version, protocol.Version)
-		fmt.Printf("Source: %s\n", github)
+		fmt.Printf("%s (%sosh %sort %sorward) \n%s\nversion %s (protocol %s)\n", mpf, m, p, f, github, Version, protocol.Version)
 	case "agent":
 		if err := agent.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
