@@ -54,8 +54,8 @@ func main() {
 
 	switch cmd {
 	case "version":
-		fmt.Printf("%s (%sosh %sort %sorward) version %s\n", mpf, m, p, f, protocol.Version)
-		fmt.Printf("Source: %s\n", github)
+		fmt.Printf("%s (%sosh %sort %sorward) - %s\n", mpf, m, p, f, github)
+		fmt.Printf("version: %s\n", protocol.Version)
 	case "agent":
 		if err := agent.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
@@ -121,7 +121,7 @@ func main() {
 }
 
 func printMoshUsage() {
-	fmt.Println("Usage: mpf [flags] mosh [user@]host")
+	fmt.Println("Usage: mpf [flags] mosh [user@]host [more mosh args]")
 }
 
 func printUsage() {
