@@ -40,12 +40,12 @@ func waitEnterOrEsc() error {
 			return err
 		}
 		if buf[0] == '\r' || buf[0] == '\n' {
-			fmt.Print("\n")
+			fmt.Print("\r\n")
 			return nil
 		}
 		if buf[0] == 0x1b { // Esc
-			fmt.Print("\nAborted by user\n")
-			os.Exit(0)
+			fmt.Print("\r\nAborted by user\r\n")
+			return fmt.Errorf("aborted")
 		}
 	}
 }
@@ -75,7 +75,9 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	if err == nil {
 		if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
 			fmt.Print(warn)
-			_ = waitEnterOrEsc()
+			if err := waitEnterOrEsc(); err != nil {
+				return nil // Graceful exit
+			}
 		}
 	}
 
@@ -96,7 +98,9 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 		remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
 		if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
 			fmt.Print(warn)
-			_ = waitEnterOrEsc()
+			if err := waitEnterOrEsc(); err != nil {
+				return nil // Graceful exit
+			}
 		}
 	}
 
