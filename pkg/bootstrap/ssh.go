@@ -90,3 +90,31 @@ func Connect(target string) (*ssh.Client, error) {
 	log.Info().Str("host", host).Str("user", username).Msg("Connecting to SSH host")
 	return ssh.Dial("tcp", host, config)
 }
+
+func GetRemoteUDPBufferInfo(client *ssh.Client) (int, int, error) {
+	run := func(cmd string) (int, error) {
+		session, err := client.NewSession()
+		if err != nil {
+			return 0, err
+		}
+		defer session.Close()
+		out, err := session.Output(cmd)
+		if err != nil {
+			return 0, err
+		}
+		var val int
+		_, err = fmt.Sscanf(string(out), "%d", &val)
+		return val, err
+	}
+
+	rmem, err := run("sysctl -n net.core.rmem_max")
+	if err != nil {
+		return 0, 0, err
+	}
+	wmem, err := run("sysctl -n net.core.wmem_max")
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return rmem, wmem, nil
+}

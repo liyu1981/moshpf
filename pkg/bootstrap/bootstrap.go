@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -88,6 +89,25 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 		return fmt.Errorf("failed to deploy agent: %v", err)
 	}
 	log.Info().Str("path", remotePath).Msg("Remote binary found/deployed")
+
+	// Check UDP buffers for QUIC
+	localBuf, err := tunnel.GetUDPBufferInfo()
+	if err == nil {
+		if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
+			fmt.Print(warn)
+			fmt.Print("Press Enter to continue anyway...")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}
+	}
+	rmem, wmem, err := GetRemoteUDPBufferInfo(client)
+	if err == nil {
+		remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
+		if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
+			fmt.Print(warn)
+			fmt.Print("Press Enter to continue anyway...")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}
+	}
 
 	session, err := client.NewSession()
 	if err != nil {
