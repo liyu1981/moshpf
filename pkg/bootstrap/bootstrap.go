@@ -50,7 +50,15 @@ func waitEnterOrEsc() error {
 	}
 }
 
-func Run(args []string, remoteBinaryPath string, isDev bool) error {
+type TransportMode string
+
+const (
+	TransportModeFallback TransportMode = "fallback"
+	TransportModeQUIC     TransportMode = "quic"
+	TransportModeTCP      TransportMode = "tcp"
+)
+
+func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mpf mosh [user@]host")
 	}
@@ -71,12 +79,14 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	}
 
 	// 1. Initial Local Check
-	localBuf, err := tunnel.GetUDPBufferInfo()
-	if err == nil {
-		if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
-			fmt.Print(warn)
-			if err := waitEnterOrEsc(); err != nil {
-				return nil // Graceful exit
+	if mode != TransportModeTCP {
+		localBuf, err := tunnel.GetUDPBufferInfo()
+		if err == nil {
+			if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
+				fmt.Print(warn)
+				if err := waitEnterOrEsc(); err != nil {
+					return nil // Graceful exit
+				}
 			}
 		}
 	}
@@ -93,13 +103,15 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 		return fmt.Errorf("failed to deploy agent: %v", err)
 	}
 
-	rmem, wmem, err := GetRemoteUDPBufferInfo(client)
-	if err == nil {
-		remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
-		if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
-			fmt.Print(warn)
-			if err := waitEnterOrEsc(); err != nil {
-				return nil // Graceful exit
+	if mode != TransportModeTCP {
+		rmem, wmem, err := GetRemoteUDPBufferInfo(client)
+		if err == nil {
+			remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
+			if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
+				fmt.Print(warn)
+				if err := waitEnterOrEsc(); err != nil {
+					return nil // Graceful exit
+				}
 			}
 		}
 	}
@@ -121,14 +133,14 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 		}
 
 		// Initial session using the already established client
-		err := runSessionWithClient(client, remotePath, target, fwd)
+		err := runSessionWithClient(client, remotePath, target, fwd, mode)
 		if err != nil {
 			log.Error().Err(err).Msg("Initial session failed, reconnecting...")
 		}
 
 		backoff := 1 * time.Second
 		for {
-			err := runSession(target, remoteBinaryPath, isDev, fwd)
+			err := runSession(target, remoteBinaryPath, isDev, fwd, mode)
 			if err != nil {
 				log.Error().Err(err).Msg("Session failed, reconnecting...")
 				time.Sleep(backoff)
@@ -146,7 +158,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool) error {
 	return mosh.Run(args, isDev)
 }
 
-func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward.Forwarder) error {
+func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward.Forwarder, mode TransportMode) error {
 	client, err := Connect(target)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
@@ -157,10 +169,10 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 	if err != nil {
 		return fmt.Errorf("failed to deploy agent: %v", err)
 	}
-	return runSessionWithClient(client, remotePath, target, fwd)
+	return runSessionWithClient(client, remotePath, target, fwd, mode)
 }
 
-func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *forward.Forwarder) error {
+func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *forward.Forwarder, mode TransportMode) error {
 	session, err := client.NewSession()
 	if err != nil {
 		return err
@@ -297,8 +309,8 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 
 	addSession(tSession)
 
-	// Attempt QUIC if available
-	if ack.UDPPort > 0 && ack.TLSHash != "" {
+	// Attempt QUIC if available and mode allows it
+	if mode != TransportModeTCP && ack.UDPPort > 0 && ack.TLSHash != "" {
 		go func() {
 			remoteHost := target
 			if i := strings.Index(remoteHost, "@"); i != -1 {
@@ -315,6 +327,11 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 
 			qConn, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", remoteHost, ack.UDPPort), tlsConf, nil)
 			if err != nil {
+				if mode == TransportModeQUIC {
+					log.Error().Err(err).Msg("QUIC upgrade failed in QUIC-only mode")
+					errChan <- fmt.Errorf("QUIC upgrade failed: %v", err)
+					return
+				}
 				log.Warn().Err(err).Msg("QUIC upgrade failed, staying on TCP")
 				return
 			}
@@ -323,13 +340,31 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to create QUIC session")
 				qConn.CloseWithError(0, "")
+				if mode == TransportModeQUIC {
+					errChan <- fmt.Errorf("failed to create QUIC session: %v", err)
+				}
 				return
 			}
 
 			log.Info().Msg("QUIC upgrade successful")
 			fwd.AddSession(qSession)
 			addSession(qSession)
+
+			if mode == TransportModeQUIC {
+				log.Info().Msg("QUIC-only mode: closing TCP tunnel")
+				fwd.RemoveSession(tSession)
+				sessionsMu.Lock()
+				if stop, ok := sessions[tSession]; ok {
+					close(stop)
+					delete(sessions, tSession)
+				}
+				sessionsMu.Unlock()
+				tSession.Mux.Close()
+			}
 		}()
+	} else if mode == TransportModeQUIC {
+		// Agent didn't offer QUIC
+		errChan <- fmt.Errorf("remote agent does not support QUIC")
 	}
 
 	select {

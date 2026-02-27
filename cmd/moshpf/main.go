@@ -16,14 +16,37 @@ const Version = "dev"
 func main() {
 	logger.Init()
 
-	if len(os.Args) < 2 {
+	mode := bootstrap.TransportModeFallback
+	var cmd string
+	var cmdArgs []string
+
+	i := 1
+	for i < len(os.Args) {
+		arg := os.Args[i]
+		if arg == "--quic" {
+			mode = bootstrap.TransportModeQUIC
+			i++
+			continue
+		} else if arg == "--tcp" {
+			mode = bootstrap.TransportModeTCP
+			i++
+			continue
+		}
+
+		// Not a known global flag, must be the command
+		cmd = arg
+		cmdArgs = os.Args[i+1:]
+		break
+	}
+
+	if cmd == "" {
 		printUsage()
 		return
 	}
 
 	isDev := os.Getenv("APP_ENV") == "dev"
 
-	switch os.Args[1] {
+	switch cmd {
 	case "version":
 		fmt.Printf("mpf version %s (protocol version %s)\n", Version, protocol.Version)
 	case "agent":
@@ -32,22 +55,22 @@ func main() {
 			os.Exit(1)
 		}
 	case "forward":
-		if len(os.Args) < 3 {
+		if len(cmdArgs) < 1 {
 			fmt.Println("Usage: mpf forward <port>")
 			os.Exit(1)
 		}
-		resp, err := sendToAgent("FORWARD:" + os.Args[2])
+		resp, err := sendToAgent("FORWARD:" + cmdArgs[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println(resp)
 	case "close":
-		if len(os.Args) < 3 {
+		if len(cmdArgs) < 1 {
 			fmt.Println("Usage: mpf close <port>")
 			os.Exit(1)
 		}
-		resp, err := sendToAgent("CLOSE:" + os.Args[2])
+		resp, err := sendToAgent("CLOSE:" + cmdArgs[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
 			os.Exit(1)
@@ -72,31 +95,43 @@ func main() {
 			fmt.Println(resp)
 		}
 	case "mosh":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: mpf mosh [user@]host")
+		if len(cmdArgs) < 1 {
+			printMoshUsage()
 			os.Exit(1)
 		}
+
 		// Default remote path
 		remotePath := "~/.local/bin/mpf"
-		if err := bootstrap.Run(os.Args[2:], remotePath, isDev); err != nil {
+		if err := bootstrap.Run(cmdArgs, remotePath, isDev, mode); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
+		os.Exit(1)
 	}
 }
 
+func printMoshUsage() {
+	fmt.Println("Usage: mpf [flags] mosh [user@]host")
+}
+
 func printUsage() {
-	fmt.Println("Usage: mpf <command> [args]")
-	fmt.Println("Commands:")
-	fmt.Println("  agent           Run in agent mode (internal use)")
+	fmt.Println("Usage: mpf [flags] <command> [args]")
+	fmt.Println("\nFlags:")
+	fmt.Println("  --quic          Use QUIC transport only")
+	fmt.Println("                  (Default: try QUIC, fallback to TCP)")
+	fmt.Println("  --tcp           Use TCP transport only")
+	fmt.Println("                  (Default: try QUIC, fallback to TCP)")
+	fmt.Println("\nCommands:")
+	fmt.Println("  mosh <args>     Start a mosh session with port forwarding")
 	fmt.Println("  forward <port>  Request port forward from an active session")
 	fmt.Println("  close <port>    Close an active port forward")
 	fmt.Println("  list            List active port forwards")
 	fmt.Println("  stop            Stop the active agent")
-	fmt.Println("  mosh <args>     Start a mosh session with port forwarding")
 	fmt.Println("  version         Show version")
+	fmt.Println("  agent           Run in agent mode (internal use)")
 }
 
 func sendToAgent(cmd string) (string, error) {
