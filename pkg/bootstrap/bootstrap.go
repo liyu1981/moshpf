@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/liyu1981/moshpf/pkg/forward"
+	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/mosh"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
@@ -192,7 +194,12 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 		return err
 	}
 
-	go io.Copy(os.Stderr, stderr)
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			log.Error().Msgf("Remote agent error: %s", scanner.Text())
+		}
+	}()
 
 	agentCmd := fmt.Sprintf("./%s agent", remotePath)
 	if err := session.Start(agentCmd); err != nil {
@@ -325,7 +332,11 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			qConn, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", remoteHost, ack.UDPPort), tlsConf, nil)
+			quicConfig := &quic.Config{
+				Tracer: logger.GetQuicTracer(),
+			}
+
+			qConn, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", remoteHost, ack.UDPPort), tlsConf, quicConfig)
 			if err != nil {
 				if mode == TransportModeQUIC {
 					log.Error().Err(err).Msg("QUIC upgrade failed in QUIC-only mode")

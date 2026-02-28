@@ -200,9 +200,13 @@ func Run() error {
 	// Start QUIC listener
 	var qListener *quic.Listener
 	var qPort uint16
+	quicConfig := &quic.Config{
+		Tracer: logger.GetQuicTracer(),
+	}
+
 	for i := 0; i < 10; i++ {
 		port := uint16(62000 + rand.Intn(1001))
-		l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), nil)
+		l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), quicConfig)
 		if err == nil {
 			qListener = l
 			qPort = port
