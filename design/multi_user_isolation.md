@@ -11,17 +11,17 @@ We will implement **Option B**, where each user runs their own completely isolat
 
 ### 1. User-Scoped Unix Sockets
 To isolate CLI interactions (like `moshpf list`), the agent's control socket will be moved to a user-specific path.
-- **New Path**: `/tmp/moshpf-$UID.sock` (where `$UID` is the user's numeric ID).
+- **New Path**: `/tmp/mpf-$UID.sock` (where `$UID` is the user's numeric ID).
 - **Benefit**: The `moshpf` CLI tool, running as the same user, will automatically calculate the correct path based on its own UID, ensuring it only talks to its own agent.
-- **Fallback**: If `/tmp` is not writable or restricted, fall back to `$HOME/.moshpf.sock`.
+- **Constraint**: If `/tmp` is not writable or the socket cannot be created, the agent will report an error and exit. No fallback to home directory.
 
 ### 2. Randomized QUIC UDP Ports
 The agent must find an available UDP port for the QUIC transport without requiring coordination from the master or other agents.
 - **Port Selection Logic**:
-    1. Define a preferred range (e.g., `40000-50000`).
+    1. Define the range: `62000-63000`.
     2. The agent will attempt to bind to a random port within this range.
-    3. If the bind fails (port in use), it will retry with a new random port (up to 10 attempts).
-    4. If no port is found in the range, it will fall back to port `0` to let the OS assign any available ephemeral port.
+    3. If the bind fails (port in use), it will continuously retry with a new random port until successful.
+    4. **No fallback** to system-assigned ports (port 0).
 - **Discovery**: The agent will report the successfully bound port back to the master process via the `HelloAck` message on the initial TCP control session.
 
 ### 3. Master-Agent Handshake Update
@@ -31,7 +31,23 @@ The master process needs to learn the agent's dynamically assigned UDP port to e
 3. **HelloAck**: Agent responds with `protocol.HelloAck`, which **must** now include the `UDPPort` it successfully bound to.
 4. **QUIC Upgrade**: Master receives `HelloAck`, extracts the port, and initiates the QUIC connection to the agent.
 
-### 4. Slave-Side CLI (`moshpf list`, `moshpf stop`)
+### 4. Same-User Reconnection Conflict Resolution
+To prevent accidental socket hijacking, the agent performs a pre-handshake check before initializing its control listeners.
+
+#### Conflict Detection Phase
+1. **Probe**: New agent attempts to connect to `/tmp/mpf-$UID.sock`.
+2. **Gather**: If a connection is established, it sends a `LIST` command to retrieve active forwardings.
+3. **Warn**: It prints the current agent's status and active tunnels to `stderr`.
+4. **Prompt**: It prints an interactive prompt to `stderr` and waits for a single-character input from `stdin`:
+   - `[C]ontinue`: Start mosh session without new port forwardings (Passive Mode).
+   - `[K]ill`: Stop the existing agent and take over its role (Fresh Start).
+   - `[A]bort`: Exit immediately.
+
+#### Operational Modes
+- **Active Mode (Default)**: Agent owns the Unix socket and manages the QUIC listener for high-performance transport.
+- **Passive Mode**: Agent skips Unix socket and QUIC initialization. It only provides the `mosh-server` lifecycle management for the current terminal session. Existing tunnels from the "Active" agent remain operational and visible.
+
+### 5. Slave-Side CLI (`moshpf list`, `moshpf stop`)
 Currently, these commands assume a singleton agent.
 - **Resolution**: Update the `protocol.GetUnixSocketPath()` utility to include the current user's UID in the filename.
 - **Result**: When User A runs `moshpf list`, the tool connects to `/tmp/moshpf-1000.sock`. When User B runs it, it connects to `/tmp/moshpf-1001.sock`. Each user sees only their own forwarded ports.

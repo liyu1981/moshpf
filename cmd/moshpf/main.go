@@ -7,17 +7,10 @@ import (
 
 	"github.com/liyu1981/moshpf/pkg/agent"
 	"github.com/liyu1981/moshpf/pkg/bootstrap"
+	"github.com/liyu1981/moshpf/pkg/constant"
 	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/util"
-)
-
-const (
-	m      = "\033[35mm\033[0m" // Magenta
-	p      = "\033[36mp\033[0m" // Cyan
-	f      = "\033[32mf\033[0m" // Green
-	mpf    = m + p + f
-	github = "https://github.com/liyu1981/moshpf"
 )
 
 func main() {
@@ -83,8 +76,8 @@ func main() {
 }
 
 func handleVersion(args []string) error {
-	fmt.Printf("%s (%sosh %sort %sorward) - %s\n", mpf, m, p, f, github)
-	fmt.Printf("version: %s\n", protocol.Version)
+	fmt.Printf("%s\n", constant.GetAppLine())
+	fmt.Printf("version: %s\n", constant.Version)
 	return nil
 }
 
@@ -143,7 +136,7 @@ func printMoshUsage() {
 }
 
 func printUsage() {
-	fmt.Printf("%s (%sosh %sort %sorward) - %s\n", mpf, m, p, f, github)
+	fmt.Printf("%s\n", constant.GetAppLine())
 	fmt.Println("\nUsage: mpf [flags] <command> [args]")
 	fmt.Println("\nFlags:")
 	fmt.Println("  --quic          Use QUIC transport only")

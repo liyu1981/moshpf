@@ -7,8 +7,6 @@ import (
 	"strconv"
 )
 
-const Version = "dev"
-
 type Message interface{}
 
 type Hello struct {

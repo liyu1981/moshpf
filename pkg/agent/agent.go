@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"encoding/gob"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liyu1981/moshpf/pkg/constant"
 	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
@@ -166,39 +168,38 @@ func Run() error {
 	logger.Init()
 	log.Info().Msg("Agent starting")
 
+	// 1. Check for existing agent (Conflict Resolution)
+	passiveMode, err := checkConflict()
+	if err != nil {
+		return err
+	}
+
 	// Generate ephemeral cert for QUIC
 	cert, fingerprint, err := tunnel.GenerateEphemeralCert()
 	if err != nil {
 		return fmt.Errorf("failed to generate cert: %v", err)
 	}
 
-	// Start QUIC listener
+	// Start QUIC listener (Only if not in passive mode)
 	var qListener *quic.Listener
 	var qPort uint16
-	quicConfig := &quic.Config{
-		Tracer: logger.GetQuicTracer(),
-	}
-
-	for i := 0; i < 10; i++ {
-		port := uint16(40000 + rand.Intn(10001))
-		l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), quicConfig)
-		if err == nil {
-			qListener = l
-			qPort = port
-			log.Info().Uint16("port", qPort).Msg("QUIC listener started")
-			break
+	if !passiveMode {
+		quicConfig := &quic.Config{
+			Tracer: logger.GetQuicTracer(),
 		}
-	}
 
-	if qListener == nil {
-		log.Warn().Msg("Failed to bind to random QUIC port, falling back to OS-assigned port")
-		l, err := quic.ListenAddr(":0", tunnel.GetTLSConfigServer(cert), quicConfig)
-		if err != nil {
-			return fmt.Errorf("failed to start QUIC listener: %v", err)
+		for {
+			port := uint16(constant.QUIC_PORT_START + rand.Intn(constant.QUIC_PORT_END-constant.QUIC_PORT_START+1))
+			l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), quicConfig)
+			if err == nil {
+				qListener = l
+				qPort = port
+				log.Info().Uint16("port", qPort).Msg("QUIC listener started")
+				break
+			}
+			log.Debug().Uint16("port", port).Err(err).Msg("Failed to bind to QUIC port, retrying...")
+			time.Sleep(100 * time.Millisecond)
 		}
-		qListener = l
-		qPort = uint16(l.Addr().(*net.UDPAddr).Port)
-		log.Info().Uint16("port", qPort).Msg("QUIC listener started on OS-assigned port")
 	}
 
 	conn := &stdioConn{
@@ -228,14 +229,14 @@ func Run() error {
 		return fmt.Errorf("expected Hello, got %T", msg)
 	}
 
-	if hello.Version != protocol.Version {
+	if hello.Version != constant.Version {
 		_ = session.Send(protocol.Shutdown{Reason: "Version mismatch"})
-		return fmt.Errorf("version mismatch: %s != %s", hello.Version, protocol.Version)
+		return fmt.Errorf("version mismatch: %s != %s", hello.Version, constant.Version)
 	}
 
 	// Send HelloAck with QUIC info
 	ack := protocol.HelloAck{
-		Version: protocol.Version,
+		Version: constant.Version,
 		UDPPort: qPort,
 		TLSHash: fingerprint,
 	}
@@ -246,32 +247,89 @@ func Run() error {
 	// Add the primary session
 	a.addSession(session)
 
-	go a.startUnixSocketServer()
+	if !passiveMode {
+		go a.startUnixSocketServer()
 
-	// Wait for QUIC connection if listener started
-	if qListener != nil {
-		go func() {
-			defer qListener.Close()
-			for {
-				qConn, err := qListener.Accept(context.Background())
-				if err != nil {
-					log.Debug().Err(err).Msg("QUIC accept failed")
-					return
+		// Wait for QUIC connection if listener started
+		if qListener != nil {
+			go func() {
+				defer qListener.Close()
+				for {
+					qConn, err := qListener.Accept(context.Background())
+					if err != nil {
+						log.Debug().Err(err).Msg("QUIC accept failed")
+						return
+					}
+					log.Info().Msg("QUIC connection established, adding session")
+					qSession, err := tunnel.NewQuicSession(qConn, true)
+					if err != nil {
+						log.Error().Err(err).Msg("Failed to create QUIC session")
+						continue
+					}
+					a.addSession(qSession)
 				}
-				log.Info().Msg("QUIC connection established, adding session")
-				qSession, err := tunnel.NewQuicSession(qConn, true)
-				if err != nil {
-					log.Error().Err(err).Msg("Failed to create QUIC session")
-					continue
-				}
-				a.addSession(qSession)
-			}
-		}()
+			}()
+		}
 	}
 
 	// The main goroutine just blocks now.
 	// We can use a channel to wait for a global shutdown if needed.
 	select {}
+}
+
+func checkConflict() (passiveMode bool, err error) {
+	sockPath := protocol.GetUnixSocketPath()
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		// No existing agent or stale socket
+		return false, nil
+	}
+	defer conn.Close()
+
+	// 1. Get list from existing agent
+	_, _ = conn.Write([]byte("LIST"))
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return false, nil // Assume stale socket
+	}
+
+	activeList := string(buf[:n])
+	fmt.Fprintf(os.Stderr, "\n\033[33m⚠️  An active moshpf agent is already running for this user.\033[0m\n")
+	fmt.Fprintf(os.Stderr, "Existing Forwardings:\n%s\n\n", activeList)
+	fmt.Fprintf(os.Stderr, "Choose an action: [\033[1mC\033[0montinue to mosh (no new forwardings), [\033[1mK\033[0mill existing agent, [\033[1mA\033[0mbort? ")
+
+	// 2. Read choice
+	reader := bufio.NewReader(os.Stdin)
+	char, _, err := reader.ReadRune()
+	if err != nil {
+		return false, fmt.Errorf("failed to read user choice: %v", err)
+	}
+
+	switch strings.ToUpper(string(char)) {
+	case "C":
+		fmt.Fprintf(os.Stderr, "\nStarting in passive mode...\n")
+		return true, nil
+	case "K":
+		fmt.Fprintf(os.Stderr, "\nStopping existing agent and starting fresh...\n")
+		kConn, err := net.Dial("unix", sockPath)
+		if err == nil {
+			_, _ = kConn.Write([]byte("STOP"))
+			kConn.Close()
+		}
+		// Wait a bit for the socket to clear
+		for i := 0; i < 20; i++ {
+			if _, err := os.Stat(sockPath); os.IsNotExist(err) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return false, nil
+	default:
+		fmt.Fprintf(os.Stderr, "\nAborting.\n")
+		os.Exit(1)
+	}
+	return false, nil
 }
 
 func (a *Agent) startUnixSocketServer() {
@@ -280,7 +338,7 @@ func (a *Agent) startUnixSocketServer() {
 
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
-		log.Error().Err(err).Str("path", sockPath).Msg("Failed to listen on unix socket")
+		log.Fatal().Err(err).Str("path", sockPath).Msg("Failed to listen on unix socket, agent exiting")
 		return
 	}
 	defer ln.Close()

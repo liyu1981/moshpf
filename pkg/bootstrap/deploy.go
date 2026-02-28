@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/constant"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
 )
@@ -43,13 +43,13 @@ func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, err
 		err = session.Run(fmt.Sprintf("./%s version", remotePath))
 		installedVersion := strings.TrimSpace(b.String())
 
-		if err != nil || !strings.Contains(installedVersion, protocol.Version) {
+		if err != nil || !strings.Contains(installedVersion, constant.Version) {
 			shouldDeploy = true
 		}
 	}
 
 	if shouldDeploy {
-		log.Info().Str("version", protocol.Version).Msg("Deploying mpf to remote")
+		log.Info().Str("version", constant.Version).Msg("Deploying mpf to remote")
 		if err := uploadBinary(client, remotePath); err != nil {
 			return "", fmt.Errorf("failed to upload binary: %v", err)
 		}

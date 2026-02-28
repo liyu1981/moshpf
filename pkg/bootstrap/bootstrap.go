@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/liyu1981/moshpf/pkg/constant"
 	"github.com/liyu1981/moshpf/pkg/forward"
 	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/mosh"
@@ -221,7 +222,7 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 		return err
 	}
 
-	if err := tSession.Send(protocol.Hello{Version: protocol.Version}); err != nil {
+	if err := tSession.Send(protocol.Hello{Version: constant.Version}); err != nil {
 		return err
 	}
 
@@ -231,7 +232,7 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 	}
 
 	ack, ok := msg.(protocol.HelloAck)
-	if !ok || ack.Version != protocol.Version {
+	if !ok || ack.Version != constant.Version {
 		return fmt.Errorf("failed handshake or version mismatch")
 	}
 
