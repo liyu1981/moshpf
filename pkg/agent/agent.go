@@ -16,12 +16,13 @@ import (
 	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/liyu1981/moshpf/pkg/util"
 	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
 )
 
 type Agent struct {
-	sessions   map[*tunnel.Session]chan struct{}
+	sessions   *tunnel.SessionManager
 	mu         sync.Mutex
 	listChan   chan protocol.ListResponse
 	closeChan  chan protocol.CloseResponse
@@ -29,62 +30,27 @@ type Agent struct {
 }
 
 func (a *Agent) addSession(s *tunnel.Session) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.sessions == nil {
-		a.sessions = make(map[*tunnel.Session]chan struct{})
-	}
-	stop := make(chan struct{})
-	a.sessions[s] = stop
-	go a.startStreamAcceptor(s, stop)
-	go a.startControlLoop(s, stop)
+	a.sessions.Add(s, nil)
+	go a.startStreamAcceptor(s)
+	go a.startControlLoop(s)
 }
 
 func (a *Agent) removeSession(s *tunnel.Session) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if stop, ok := a.sessions[s]; ok {
-		close(stop)
-		delete(a.sessions, s)
-	}
+	a.sessions.Remove(s)
 }
 
 func (a *Agent) getBestSession() *tunnel.Session {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	// Prefer QUIC sessions
-	var best *tunnel.Session
-	for s := range a.sessions {
-		if best == nil {
-			best = s
-			continue
-		}
-		// Check if it's QUIC (this is a bit hacky, maybe add Type to Session)
-		if _, ok := s.Mux.(*tunnel.QuicMultiplexer); ok {
-			best = s
-		}
-	}
-	return best
+	return a.sessions.GetBest()
 }
 
-func (a *Agent) startControlLoop(s *tunnel.Session, stop chan struct{}) {
-	stopHeartbeat := make(chan struct{})
-	go s.StartHeartbeat(stopHeartbeat)
-	defer close(stopHeartbeat)
-
+func (a *Agent) startControlLoop(s *tunnel.Session) {
 	for {
 		msg, err := s.Receive()
 		if err != nil {
 			a.removeSession(s)
 			return
 		}
-
-		select {
-		case <-stop:
-			return
-		default:
-			a.handleMessage(s, msg)
-		}
+		a.handleMessage(s, msg)
 	}
 }
 
@@ -136,20 +102,13 @@ func (a *Agent) handleMessage(s *tunnel.Session, msg protocol.Message) {
 	}
 }
 
-func (a *Agent) startStreamAcceptor(s *tunnel.Session, stop chan struct{}) {
+func (a *Agent) startStreamAcceptor(s *tunnel.Session) {
 	for {
 		stream, err := s.Mux.AcceptStream()
 		if err != nil {
 			return
 		}
-
-		select {
-		case <-stop:
-			stream.Close()
-			return
-		default:
-			go a.handleAcceptedStream(stream)
-		}
+		go a.handleAcceptedStream(stream)
 	}
 }
 
@@ -174,17 +133,7 @@ func (a *Agent) handleAcceptedStream(stream io.ReadWriteCloser) {
 
 	_, _ = stream.Write([]byte{1}) // ACK
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		io.Copy(remoteConn, stream)
-		wg.Done()
-	}()
-	go func() {
-		io.Copy(stream, remoteConn)
-		wg.Done()
-	}()
-	wg.Wait()
+	util.Proxy(remoteConn, stream)
 }
 
 func Run() error {
@@ -225,7 +174,7 @@ func Run() error {
 	}
 
 	a := &Agent{
-		sessions:   make(map[*tunnel.Session]chan struct{}),
+		sessions:   tunnel.NewSessionManager(),
 		listChan:   make(chan protocol.ListResponse, 10),
 		closeChan:  make(chan protocol.CloseResponse, 10),
 		listenChan: make(chan protocol.ListenResponse, 10),

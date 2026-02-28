@@ -1,6 +1,8 @@
 package util
 
-import "io"
+import (
+	"io"
+)
 
 type NopWriterCloser struct {
 	io.Writer

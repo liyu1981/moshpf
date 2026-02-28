@@ -3,18 +3,18 @@ package forward
 import (
 	"encoding/gob"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/liyu1981/moshpf/pkg/util"
 	"github.com/rs/zerolog/log"
 )
 
 type Forwarder struct {
-	sessions   []*tunnel.Session
+	sessions   *tunnel.SessionManager
 	remoteName string
 	masterIP   string
 	nextID     uint32
@@ -27,6 +27,7 @@ type Forwarder struct {
 
 func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Manager, target string) *Forwarder {
 	f := &Forwarder{
+		sessions:   tunnel.NewSessionManager(),
 		remoteName: remoteName,
 		masterIP:   protocol.GetLocalIP(),
 		state:      stateMgr,
@@ -35,7 +36,7 @@ func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Ma
 		forwards:   make(map[uint16]protocol.ForwardEntry),
 	}
 	if session != nil {
-		f.sessions = append(f.sessions, session)
+		f.AddSession(session)
 	}
 	return f
 }
@@ -53,40 +54,23 @@ func (f *Forwarder) GetMasterIP() string {
 }
 
 func (f *Forwarder) AddSession(session *tunnel.Session) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sessions = append(f.sessions, session)
+	f.sessions.Add(session, nil)
 }
 
 func (f *Forwarder) RemoveSession(session *tunnel.Session) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for i, s := range f.sessions {
-		if s == session {
-			f.sessions = append(f.sessions[:i], f.sessions[i+1:]...)
-			break
-		}
-	}
+	f.sessions.Remove(session)
+}
+
+func (f *Forwarder) GetSessions() *tunnel.SessionManager {
+	return f.sessions
 }
 
 func (f *Forwarder) getBestSession() *tunnel.Session {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.getBestSessionLocked()
+	return f.sessions.GetBest()
 }
 
 func (f *Forwarder) getBestSessionLocked() *tunnel.Session {
-	var best *tunnel.Session
-	for _, s := range f.sessions {
-		if best == nil {
-			best = s
-			continue
-		}
-		if _, ok := s.Mux.(*tunnel.QuicMultiplexer); ok {
-			best = s
-		}
-	}
-	return best
+	return f.sessions.GetBest()
 }
 
 func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16) error {
@@ -236,15 +220,5 @@ func (f *Forwarder) handleConnection(localConn net.Conn, remoteHost string, remo
 		return
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		io.Copy(remoteConn, localConn)
-		wg.Done()
-	}()
-	go func() {
-		io.Copy(localConn, remoteConn)
-		wg.Done()
-	}()
-	wg.Wait()
+	util.Proxy(localConn, remoteConn)
 }

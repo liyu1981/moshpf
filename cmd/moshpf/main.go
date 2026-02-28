@@ -52,72 +52,89 @@ func main() {
 
 	isDev := os.Getenv("APP_ENV") == "dev"
 
-	switch cmd {
-	case "version":
-		fmt.Printf("%s (%sosh %sort %sorward) - %s\n", mpf, m, p, f, github)
-		fmt.Printf("version: %s\n", protocol.Version)
-	case "agent":
-		if err := agent.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
-			os.Exit(1)
-		}
-	case "forward":
-		if len(cmdArgs) < 1 {
-			fmt.Println("Usage: mpf forward <port>")
-			os.Exit(1)
-		}
-		resp, err := sendToAgent("FORWARD:" + cmdArgs[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(resp)
-	case "close":
-		if len(cmdArgs) < 1 {
-			fmt.Println("Usage: mpf close <port>")
-			os.Exit(1)
-		}
-		resp, err := sendToAgent("CLOSE:" + cmdArgs[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(resp)
-	case "list":
-		resp, err := sendToAgent("LIST")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
-			os.Exit(1)
-		}
-		if resp != "" {
-			fmt.Println(resp)
-		}
-	case "stop":
-		resp, err := sendToAgent("STOP")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to send request to agent: %v\n", err)
-			os.Exit(1)
-		}
-		if resp != "" {
-			fmt.Println(resp)
-		}
-	case "mosh":
-		if len(cmdArgs) < 1 {
-			printMoshUsage()
-			os.Exit(1)
-		}
+	handlers := map[string]func([]string) error{
+		"version": handleVersion,
+		"agent":   handleAgent,
+		"forward": handleForward,
+		"close":   handleClose,
+		"list":    handleList,
+		"stop":    handleStop,
+		"mosh": func(args []string) error {
+			if len(args) < 1 {
+				printMoshUsage()
+				os.Exit(1)
+			}
+			remotePath := "~/.local/bin/mpf"
+			return bootstrap.Run(args, remotePath, isDev, mode)
+		},
+	}
 
-		// Default remote path
-		remotePath := "~/.local/bin/mpf"
-		if err := bootstrap.Run(cmdArgs, remotePath, isDev, mode); err != nil {
+	if handler, ok := handlers[cmd]; ok {
+		if err := handler(cmdArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-	default:
+	} else {
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(1)
 	}
+}
+
+func handleVersion(args []string) error {
+	fmt.Printf("%s (%sosh %sort %sorward) - %s\n", mpf, m, p, f, github)
+	fmt.Printf("version: %s\n", protocol.Version)
+	return nil
+}
+
+func handleAgent(args []string) error {
+	return agent.Run()
+}
+
+func handleForward(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("Usage: mpf forward <port>")
+	}
+	resp, err := sendToAgent("FORWARD:" + args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(resp)
+	return nil
+}
+
+func handleClose(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("Usage: mpf close <port>")
+	}
+	resp, err := sendToAgent("CLOSE:" + args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(resp)
+	return nil
+}
+
+func handleList(args []string) error {
+	resp, err := sendToAgent("LIST")
+	if err != nil {
+		return err
+	}
+	if resp != "" {
+		fmt.Println(resp)
+	}
+	return nil
+}
+
+func handleStop(args []string) error {
+	resp, err := sendToAgent("STOP")
+	if err != nil {
+		return err
+	}
+	if resp != "" {
+		fmt.Println(resp)
+	}
+	return nil
 }
 
 func printMoshUsage() {

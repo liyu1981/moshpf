@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/liyu1981/moshpf/pkg/forward"
@@ -215,7 +214,6 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 	if err != nil {
 		return err
 	}
-	fwd.AddSession(tSession)
 
 	if err := tSession.Send(protocol.Hello{Version: protocol.Version}); err != nil {
 		return err
@@ -233,144 +231,43 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 
 	log.Info().Msg("Tunnel established")
 
-	sessions := make(map[*tunnel.Session]chan struct{})
-	var sessionsMu sync.Mutex
 	errChan := make(chan error, 1)
 	remoteHostname := fwd.GetRemoteName()
 
-	addSession := func(s *tunnel.Session) {
-		sessionsMu.Lock()
-		defer sessionsMu.Unlock()
-		stop := make(chan struct{})
-		sessions[s] = stop
-		go func() {
-			s.StartHeartbeat(stop)
-		}()
+	var startControlLoop func(s *tunnel.Session)
+	startControlLoop = func(s *tunnel.Session) {
+		fwd.GetSessions().Add(s, func() {
+			if fwd.GetSessions().Count() == 0 {
+				errChan <- fmt.Errorf("all sessions closed")
+			}
+		})
+
 		go func() {
 			for {
 				msg, err := s.Receive()
 				if err != nil {
-					sessionsMu.Lock()
-					if _, ok := sessions[s]; ok {
-						delete(sessions, s)
-						fwd.RemoveSession(s)
-						close(stop)
-					}
-					isPrimary := (len(sessions) == 0)
-					sessionsMu.Unlock()
-					if isPrimary {
-						errChan <- err
-					}
+					fwd.RemoveSession(s)
 					return
 				}
 
 				log.Debug().Type("type", msg).Msg("Master received message")
 
-				switch m := msg.(type) {
-				case protocol.Heartbeat:
-					_ = s.Send(protocol.HeartbeatAck{})
-				case protocol.HeartbeatAck:
-					// OK
-				case protocol.ListenRequest:
-					log.Info().
-						Str("local", m.LocalAddr).
-						Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
-						Msg("Dynamic listen request received")
-					err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort)
-					resp := protocol.ListenResponse{
-						RemotePort: m.RemotePort,
-						Success:    err == nil,
-					}
-					if err != nil {
-						log.Error().Err(err).Msg("Failed to handle dynamic listen request")
-						resp.Reason = err.Error()
-					}
-					_ = s.Send(resp)
-				case protocol.ListRequest:
-					entries := fwd.GetForwardEntries()
-					masterIP := fwd.GetMasterIP()
-					err := s.Send(protocol.ListResponse{
-						Entries:  entries,
-						MasterIP: masterIP,
-					})
-					if err != nil {
-						log.Error().Err(err).Msg("Master failed to send ListResponse")
-					}
-				case protocol.CloseRequest:
-					log.Info().
-						Str("remote", remoteHostname).
-						Uint16("port", m.Port).
-						Msg("Close request received")
-					success := fwd.CloseForward(m.Port)
-					_ = s.Send(protocol.CloseResponse{
-						Port:    m.Port,
-						Success: success,
-					})
-				case protocol.Shutdown:
-					errChan <- nil
+				if stop := handleMasterMessage(s, msg, fwd, remoteHostname, errChan); stop {
 					return
 				}
 			}
 		}()
 	}
 
-	addSession(tSession)
+	startControlLoop(tSession)
 
 	// Attempt QUIC if available and mode allows it
 	if mode != TransportModeTCP && ack.UDPPort > 0 && ack.TLSHash != "" {
 		go func() {
-			remoteHost := target
-			if i := strings.Index(remoteHost, "@"); i != -1 {
-				remoteHost = remoteHost[i+1:]
-			}
-			if h, _, err := net.SplitHostPort(remoteHost); err == nil {
-				remoteHost = h
-			}
-
-			log.Info().Str("host", remoteHost).Uint16("port", ack.UDPPort).Msg("Attempting QUIC upgrade")
-			tlsConf := tunnel.GetTLSConfigClient(ack.TLSHash)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			quicConfig := &quic.Config{
-				Tracer: logger.GetQuicTracer(),
-			}
-
-			qConn, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", remoteHost, ack.UDPPort), tlsConf, quicConfig)
-			if err != nil {
+			if err := attemptQUICUpgrade(target, ack, fwd, mode, startControlLoop, tSession); err != nil {
 				if mode == TransportModeQUIC {
-					log.Error().Err(err).Msg("QUIC upgrade failed in QUIC-only mode")
-					errChan <- fmt.Errorf("QUIC upgrade failed: %v", err)
-					return
+					errChan <- err
 				}
-				log.Warn().Err(err).Msg("QUIC upgrade failed, staying on TCP")
-				return
-			}
-
-			qSession, err := tunnel.NewQuicSession(qConn, false)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to create QUIC session")
-				qConn.CloseWithError(0, "")
-				if mode == TransportModeQUIC {
-					errChan <- fmt.Errorf("failed to create QUIC session: %v", err)
-				}
-				return
-			}
-
-			log.Info().Msg("QUIC upgrade successful")
-			fwd.AddSession(qSession)
-			addSession(qSession)
-
-			if mode == TransportModeQUIC {
-				log.Info().Msg("QUIC-only mode: closing TCP tunnel")
-				fwd.RemoveSession(tSession)
-				sessionsMu.Lock()
-				if stop, ok := sessions[tSession]; ok {
-					close(stop)
-					delete(sessions, tSession)
-				}
-				sessionsMu.Unlock()
-				tSession.Mux.Close()
 			}
 		}()
 	} else if mode == TransportModeQUIC {
@@ -378,16 +275,96 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 		errChan <- fmt.Errorf("remote agent does not support QUIC")
 	}
 
-	select {
-	case err := <-errChan:
-		sessionsMu.Lock()
-		for s, stop := range sessions {
-			close(stop)
-			s.Mux.Close()
+	return <-errChan
+}
+
+func handleMasterMessage(s *tunnel.Session, msg protocol.Message, fwd *forward.Forwarder, remoteHostname string, errChan chan error) bool {
+	switch m := msg.(type) {
+	case protocol.Heartbeat:
+		_ = s.Send(protocol.HeartbeatAck{})
+	case protocol.HeartbeatAck:
+		// OK
+	case protocol.ListenRequest:
+		log.Info().
+			Str("local", m.LocalAddr).
+			Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
+			Msg("Dynamic listen request received")
+		err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort)
+		resp := protocol.ListenResponse{
+			RemotePort: m.RemotePort,
+			Success:    err == nil,
 		}
-		sessionsMu.Unlock()
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to handle dynamic listen request")
+			resp.Reason = err.Error()
+		}
+		_ = s.Send(resp)
+	case protocol.ListRequest:
+		entries := fwd.GetForwardEntries()
+		masterIP := fwd.GetMasterIP()
+		err := s.Send(protocol.ListResponse{
+			Entries:  entries,
+			MasterIP: masterIP,
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("Master failed to send ListResponse")
+		}
+	case protocol.CloseRequest:
+		log.Info().
+			Str("remote", remoteHostname).
+			Uint16("port", m.Port).
+			Msg("Close request received")
+		success := fwd.CloseForward(m.Port)
+		_ = s.Send(protocol.CloseResponse{
+			Port:    m.Port,
+			Success: success,
+		})
+	case protocol.Shutdown:
+		errChan <- nil
+		return true
+	}
+	return false
+}
+
+func attemptQUICUpgrade(target string, ack protocol.HelloAck, fwd *forward.Forwarder, mode TransportMode, startControl func(*tunnel.Session), tSession *tunnel.Session) error {
+	remoteHost := target
+	if i := strings.Index(remoteHost, "@"); i != -1 {
+		remoteHost = remoteHost[i+1:]
+	}
+	if h, _, err := net.SplitHostPort(remoteHost); err == nil {
+		remoteHost = h
+	}
+
+	log.Info().Str("host", remoteHost).Uint16("port", ack.UDPPort).Msg("Attempting QUIC upgrade")
+	tlsConf := tunnel.GetTLSConfigClient(ack.TLSHash)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	quicConfig := &quic.Config{
+		Tracer: logger.GetQuicTracer(),
+	}
+
+	qConn, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", remoteHost, ack.UDPPort), tlsConf, quicConfig)
+	if err != nil {
+		log.Warn().Err(err).Msg("QUIC upgrade failed, staying on TCP")
 		return err
 	}
+
+	qSession, err := tunnel.NewQuicSession(qConn, false)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create QUIC session")
+		qConn.CloseWithError(0, "")
+		return err
+	}
+
+	log.Info().Msg("QUIC upgrade successful")
+	startControl(qSession)
+
+	if mode == TransportModeQUIC {
+		log.Info().Msg("QUIC-only mode: closing TCP tunnel")
+		fwd.RemoveSession(tSession)
+	}
+	return nil
 }
 
 type sessionConn struct {
