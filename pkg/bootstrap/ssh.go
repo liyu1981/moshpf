@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"net"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/term"
-	"net"
 
 	"github.com/rs/zerolog/log"
 )

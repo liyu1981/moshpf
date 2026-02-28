@@ -22,15 +22,41 @@ import (
 )
 
 type Agent struct {
-	sessions   *tunnel.SessionManager
-	mu         sync.Mutex
-	listChan   chan protocol.ListResponse
-	closeChan  chan protocol.CloseResponse
-	listenChan chan protocol.ListenResponse
+	sessions      *tunnel.SessionManager
+	mu            sync.Mutex
+	listChan      chan protocol.ListResponse
+	closeChan     chan protocol.CloseResponse
+	listenChan    chan protocol.ListenResponse
+	shutdownTimer *time.Timer
 }
 
 func (a *Agent) addSession(s *tunnel.Session) {
-	a.sessions.Add(s, nil)
+	a.mu.Lock()
+	if a.shutdownTimer != nil {
+		log.Info().Msg("New session connected, canceling shutdown timer")
+		a.shutdownTimer.Stop()
+		a.shutdownTimer = nil
+	}
+	a.mu.Unlock()
+
+	a.sessions.Add(s, func() {
+		var maxWait = 10 * time.Minute
+		if util.IsDev() {
+			maxWait = 5 * time.Second
+		}
+		if a.sessions.Count() == 0 {
+			a.mu.Lock()
+			if a.shutdownTimer != nil {
+				a.shutdownTimer.Stop()
+			}
+			log.Info().Msg("No active sessions left, starting 10-minute shutdown timer")
+			a.shutdownTimer = time.AfterFunc(maxWait, func() {
+				log.Info().Msg("Shutdown timer expired, agent exiting")
+				os.Exit(0)
+			})
+			a.mu.Unlock()
+		}
+	})
 	go a.startStreamAcceptor(s)
 	go a.startControlLoop(s)
 }
@@ -154,13 +180,25 @@ func Run() error {
 	}
 
 	for i := 0; i < 10; i++ {
-		port := uint16(62000 + rand.Intn(1001))
+		port := uint16(40000 + rand.Intn(10001))
 		l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), quicConfig)
 		if err == nil {
 			qListener = l
 			qPort = port
+			log.Info().Uint16("port", qPort).Msg("QUIC listener started")
 			break
 		}
+	}
+
+	if qListener == nil {
+		log.Warn().Msg("Failed to bind to random QUIC port, falling back to OS-assigned port")
+		l, err := quic.ListenAddr(":0", tunnel.GetTLSConfigServer(cert), quicConfig)
+		if err != nil {
+			return fmt.Errorf("failed to start QUIC listener: %v", err)
+		}
+		qListener = l
+		qPort = uint16(l.Addr().(*net.UDPAddr).Port)
+		log.Info().Uint16("port", qPort).Msg("QUIC listener started on OS-assigned port")
 	}
 
 	conn := &stdioConn{
@@ -174,10 +212,11 @@ func Run() error {
 	}
 
 	a := &Agent{
-		sessions:   tunnel.NewSessionManager(),
-		listChan:   make(chan protocol.ListResponse, 10),
-		closeChan:  make(chan protocol.CloseResponse, 10),
-		listenChan: make(chan protocol.ListenResponse, 10),
+		sessions:      tunnel.NewSessionManager(),
+		listChan:      make(chan protocol.ListResponse, 10),
+		closeChan:     make(chan protocol.CloseResponse, 10),
+		listenChan:    make(chan protocol.ListenResponse, 10),
+		shutdownTimer: nil,
 	}
 
 	msg, err := session.Receive()

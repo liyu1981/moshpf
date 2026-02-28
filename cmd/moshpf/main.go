@@ -9,6 +9,7 @@ import (
 	"github.com/liyu1981/moshpf/pkg/bootstrap"
 	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/protocol"
+	"github.com/liyu1981/moshpf/pkg/util"
 )
 
 const (
@@ -50,7 +51,7 @@ func main() {
 		return
 	}
 
-	isDev := os.Getenv("APP_ENV") == "dev"
+	isDev := util.IsDev()
 
 	handlers := map[string]func([]string) error{
 		"version": handleVersion,

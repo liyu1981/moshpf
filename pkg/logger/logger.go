@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/liyu1981/moshpf/pkg/util"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -12,7 +13,7 @@ import (
 func Init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 
-	if os.Getenv("APP_ENV") == "dev" {
+	if util.IsDev() {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 		zerolog.SetGlobalLevel(zerolog.TraceLevel)
 		return

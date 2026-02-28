@@ -14,8 +14,8 @@ import (
 )
 
 func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, error) {
-	if strings.HasPrefix(remotePath, "~/") {
-		remotePath = strings.TrimPrefix(remotePath, "~/")
+	if after, ok := strings.CutPrefix(remotePath, "~/"); ok {
+		remotePath = after
 	}
 
 	shouldDeploy := force

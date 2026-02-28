@@ -2,6 +2,8 @@ package tunnel
 
 import (
 	"sync"
+
+	"github.com/liyu1981/moshpf/pkg/protocol"
 )
 
 // SessionManager manages multiple sessions (TCP/QUIC) and provides the best one.
@@ -77,4 +79,12 @@ func (m *SessionManager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.sessions)
+}
+
+func (m *SessionManager) Broadcast(msg protocol.Message) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for s := range m.sessions {
+		_ = s.Send(msg)
+	}
 }

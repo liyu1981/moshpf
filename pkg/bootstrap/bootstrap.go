@@ -16,6 +16,7 @@ import (
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/liyu1981/moshpf/pkg/state"
 	"github.com/liyu1981/moshpf/pkg/tunnel"
+	"github.com/liyu1981/moshpf/pkg/util"
 	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
@@ -201,6 +202,11 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 	}()
 
 	agentCmd := fmt.Sprintf("./%s agent", remotePath)
+	if util.IsDev() {
+		if err := session.Setenv("APP_ENV", "dev"); err != nil {
+			log.Error().Msgf("Set APP_ENV=dev for remote failed: %s", err.Error())
+		}
+	}
 	if err := session.Start(agentCmd); err != nil {
 		return err
 	}
