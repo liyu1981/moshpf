@@ -30,6 +30,7 @@ type Agent struct {
 	closeChan     chan protocol.CloseResponse
 	listenChan    chan protocol.ListenResponse
 	shutdownTimer *time.Timer
+	autoForwarder *AutoForwarder
 }
 
 func (a *Agent) addSession(s *tunnel.Session) {
@@ -234,6 +235,12 @@ func Run() error {
 		return fmt.Errorf("version mismatch: %s != %s", hello.Version, constant.Version)
 	}
 
+	if hello.AutoForward && !passiveMode {
+		log.Info().Msg("Auto port forwarding enabled")
+		a.autoForwarder = NewAutoForwarder(a)
+		a.autoForwarder.Start()
+	}
+
 	// Send HelloAck with QUIC info
 	ack := protocol.HelloAck{
 		Version: constant.Version,
@@ -402,7 +409,12 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 					localAddr = strings.Replace(localAddr, ":", " ", 1)
 				}
 
-				res += fmt.Sprintf("%d -> %s [%s] (%s)", e.RemotePort, localAddr, e.Transport, status)
+				autoStr := "MANUAL"
+				if e.IsAuto {
+					autoStr = "AUTO"
+				}
+
+				res += fmt.Sprintf("%d -> %s [%s] (%s) %s", e.RemotePort, localAddr, e.Transport, status, autoStr)
 			}
 			_, _ = conn.Write([]byte(res))
 		case <-time.After(5 * time.Second):

@@ -10,7 +10,8 @@ import (
 type Message interface{}
 
 type Hello struct {
-	Version string
+	Version     string
+	AutoForward bool
 }
 
 type HelloAck struct {
@@ -28,6 +29,7 @@ type ListenRequest struct {
 	LocalAddr  string
 	RemoteHost string
 	RemotePort uint16
+	IsAuto     bool
 }
 
 type ListenResponse struct {
@@ -43,6 +45,7 @@ type ForwardEntry struct {
 	RemoteHost string
 	RemotePort uint16
 	Transport  string
+	IsAuto     bool
 	Error      string
 }
 

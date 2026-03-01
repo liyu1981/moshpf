@@ -73,7 +73,7 @@ func (f *Forwarder) getBestSessionLocked() *tunnel.Session {
 	return f.sessions.GetBest()
 }
 
-func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16) error {
+func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16, isAuto bool) error {
 	var masterPort uint16
 	fmt.Sscanf(localAddr, ":%d", &masterPort)
 	if masterPort == 0 {
@@ -84,20 +84,30 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		}
 	}
 
-	ln, err := net.Listen("tcp", localAddr)
-
 	f.mu.Lock()
+	if _, exists := f.listeners[masterPort]; exists {
+		f.mu.Unlock()
+		return fmt.Errorf("port %d already has an active listener", masterPort)
+	}
+
+	ln, err := net.Listen("tcp", localAddr)
+	if err != nil {
+		f.forwards[masterPort] = protocol.ForwardEntry{
+			LocalAddr:  localAddr,
+			RemoteHost: remoteHost,
+			RemotePort: remotePort,
+			IsAuto:     isAuto,
+			Error:      err.Error(),
+		}
+		f.mu.Unlock()
+		return err
+	}
+
 	f.forwards[masterPort] = protocol.ForwardEntry{
 		LocalAddr:  localAddr,
 		RemoteHost: remoteHost,
 		RemotePort: remotePort,
-	}
-	if err != nil {
-		entry := f.forwards[masterPort]
-		entry.Error = err.Error()
-		f.forwards[masterPort] = entry
-		f.mu.Unlock()
-		return err
+		IsAuto:     isAuto,
 	}
 
 	if f.state != nil {
@@ -109,9 +119,6 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		displayHost = f.remoteName
 	}
 
-	if oldLn, exists := f.listeners[masterPort]; exists {
-		oldLn.Close()
-	}
 	f.listeners[masterPort] = ln
 	f.mu.Unlock()
 

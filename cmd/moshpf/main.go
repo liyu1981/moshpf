@@ -17,6 +17,8 @@ func main() {
 	logger.Init()
 
 	mode := bootstrap.TransportModeFallback
+	autoForward := true
+	noRestore := false
 	var cmd string
 	var cmdArgs []string
 
@@ -29,6 +31,14 @@ func main() {
 			continue
 		} else if arg == "--tcp" {
 			mode = bootstrap.TransportModeTCP
+			i++
+			continue
+		} else if arg == "--no-auto-forward" {
+			autoForward = false
+			i++
+			continue
+		} else if arg == "--no-restore" {
+			noRestore = true
 			i++
 			continue
 		}
@@ -59,7 +69,7 @@ func main() {
 				os.Exit(1)
 			}
 			remotePath := "~/.local/bin/mpf"
-			return bootstrap.Run(args, remotePath, isDev, mode)
+			return bootstrap.Run(args, remotePath, isDev, mode, autoForward, noRestore)
 		},
 	}
 
@@ -143,14 +153,16 @@ func printUsage() {
 	fmt.Println("                  (Default: try QUIC, fallback to TCP)")
 	fmt.Println("  --tcp           Use TCP transport only")
 	fmt.Println("                  (Default: try QUIC, fallback to TCP)")
+	fmt.Println("  --no-auto-forward  Disable auto port forwarding from slave side")
+	fmt.Println("  --no-restore       Disable auto restoring forwards from saved state(~/.mpf/forwards.json)")
 	fmt.Println("\nCommands:")
 	fmt.Println("  mosh <args>     Start a mosh session with port forwarding")
 	fmt.Println("  forward <port>  Request port forward from an active session")
 	fmt.Println("  close <port>    Close an active port forward")
 	fmt.Println("  list            List active port forwards")
-	fmt.Println("  stop            Stop the active agent")
+	// fmt.Println("  stop            Stop the active agent")
 	fmt.Println("  version         Show version")
-	fmt.Println("  agent           Run in agent mode (internal use)")
+	// fmt.Println("  agent           Run in agent mode (internal use)")
 }
 
 func sendToAgent(cmd string) (string, error) {

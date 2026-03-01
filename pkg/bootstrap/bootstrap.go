@@ -61,7 +61,7 @@ const (
 	TransportModeTCP      TransportMode = "tcp"
 )
 
-func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode) error {
+func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode, autoForward, noRestore bool) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mpf mosh [user@]host")
 	}
@@ -124,26 +124,25 @@ func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode)
 	// Start the session for port forwarding
 	go func() {
 		// Initial restore from state
-		if stateMgr != nil {
+		if stateMgr != nil && !noRestore {
 			for mStr, sStr := range stateMgr.GetForwards(target) {
 				var mPort, sPort uint16
 				fmt.Sscanf(mStr, "%d", &mPort)
 				fmt.Sscanf(sStr, "%d", &sPort)
 				if mPort > 0 && sPort > 0 {
-					_ = fwd.ListenAndForward(fmt.Sprintf(":%d", mPort), "localhost", sPort)
+					_ = fwd.ListenAndForward(fmt.Sprintf(":%d", mPort), "localhost", sPort, false)
 				}
 			}
 		}
-
 		// Initial session using the already established client
-		err := runSessionWithClient(client, remotePath, target, fwd, mode)
+		err := runSessionWithClient(client, remotePath, target, fwd, mode, autoForward)
 		if err != nil {
 			log.Error().Err(err).Msg("Initial session failed, reconnecting...")
 		}
 
 		backoff := 1 * time.Second
 		for {
-			err := runSession(target, remoteBinaryPath, isDev, fwd, mode)
+			err := runSession(target, remoteBinaryPath, isDev, fwd, mode, autoForward)
 			if err != nil {
 				log.Error().Err(err).Msg("Session failed, reconnecting...")
 				time.Sleep(backoff)
@@ -161,7 +160,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode)
 	return mosh.Run(args, isDev)
 }
 
-func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward.Forwarder, mode TransportMode) error {
+func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward.Forwarder, mode TransportMode, autoForward bool) error {
 	client, err := Connect(target)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
@@ -172,10 +171,10 @@ func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward
 	if err != nil {
 		return fmt.Errorf("failed to deploy agent: %v", err)
 	}
-	return runSessionWithClient(client, remotePath, target, fwd, mode)
+	return runSessionWithClient(client, remotePath, target, fwd, mode, autoForward)
 }
 
-func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *forward.Forwarder, mode TransportMode) error {
+func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *forward.Forwarder, mode TransportMode, autoForward bool) error {
 	session, err := client.NewSession()
 	if err != nil {
 		return err
@@ -222,7 +221,10 @@ func runSessionWithClient(client *ssh.Client, remotePath, target string, fwd *fo
 		return err
 	}
 
-	if err := tSession.Send(protocol.Hello{Version: constant.Version}); err != nil {
+	if err := tSession.Send(protocol.Hello{
+		Version:     constant.Version,
+		AutoForward: autoForward,
+	}); err != nil {
 		return err
 	}
 
@@ -295,8 +297,9 @@ func handleMasterMessage(s *tunnel.Session, msg protocol.Message, fwd *forward.F
 		log.Info().
 			Str("local", m.LocalAddr).
 			Str("remote", fmt.Sprintf("%s:%d", remoteHostname, m.RemotePort)).
+			Bool("auto", m.IsAuto).
 			Msg("Dynamic listen request received")
-		err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort)
+		err := fwd.ListenAndForward(m.LocalAddr, m.RemoteHost, m.RemotePort, m.IsAuto)
 		resp := protocol.ListenResponse{
 			RemotePort: m.RemotePort,
 			Success:    err == nil,
