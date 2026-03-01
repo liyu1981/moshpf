@@ -41,7 +41,6 @@ func Init() {
 		Compress:   true,
 	}
 
-
 	// We use InfoLevel as the base for the file log.
 	// We use MultiLevelWriter to log to both file and stderr if needed,
 	// but here we just log to file. If we want silence on console, we only set file as output.

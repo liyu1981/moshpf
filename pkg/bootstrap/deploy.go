@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/liyu1981/moshpf/pkg/constant"
@@ -50,12 +51,92 @@ func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, err
 
 	if shouldDeploy {
 		log.Info().Str("version", constant.Version).Msg("Deploying mpf to remote")
-		if err := uploadBinary(client, remotePath); err != nil {
-			return "", fmt.Errorf("failed to upload binary: %v", err)
+		remoteArch, err := getRemoteArch(client)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to get remote architecture, assuming match and trying to upload")
+			if err := uploadBinary(client, remotePath); err != nil {
+				return "", fmt.Errorf("failed to upload binary: %v", err)
+			}
+		} else if runtime.GOOS == "linux" && isArchMatch(remoteArch) {
+			if err := uploadBinary(client, remotePath); err != nil {
+				return "", fmt.Errorf("failed to upload binary: %v", err)
+			}
+		} else {
+			log.Info().Str("remote_arch", remoteArch).Str("local_arch", runtime.GOARCH).Str("local_os", runtime.GOOS).Msg("Architecture or OS mismatch, falling back to download")
+			if err := downloadBinary(client, remotePath, remoteArch); err != nil {
+				return "", fmt.Errorf("failed to download binary: %v", err)
+			}
 		}
 	}
 
 	return remotePath, nil
+}
+
+func getRemoteArch(client *ssh.Client) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+
+	var b bytes.Buffer
+	session.Stdout = &b
+	if err := session.Run("uname -m"); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(b.String()), nil
+}
+
+func isArchMatch(remoteArch string) bool {
+	localArch := runtime.GOARCH
+	switch remoteArch {
+	case "x86_64":
+		return localArch == "amd64"
+	case "aarch64":
+		return localArch == "arm64"
+	case "armv7l", "armv6l":
+		return localArch == "arm"
+	case "i386", "i686":
+		return localArch == "386"
+	}
+	return remoteArch == localArch
+}
+
+func downloadBinary(client *ssh.Client, remotePath string, remoteArch string) error {
+	if constant.Version == "dev" {
+		return fmt.Errorf("architecture mismatch (%s vs %s) and cannot download 'dev' version", remoteArch, runtime.GOARCH)
+	}
+
+	// Map remote arch to what we use in release filenames
+	releaseArch := remoteArch
+	switch remoteArch {
+	case "x86_64":
+		releaseArch = "amd64"
+	case "aarch64":
+		releaseArch = "arm64"
+	case "armv7l", "armv6l":
+		releaseArch = "arm"
+	case "i386", "i686":
+		releaseArch = "386"
+	}
+
+	version := "v" + constant.Version
+	filename := fmt.Sprintf("mpf-%s-linux-%s.tar.gz", version, releaseArch)
+	url := fmt.Sprintf("%s/releases/download/%s/%s", constant.Github, version, filename)
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	log.Info().Str("url", url).Msg("Downloading binary to remote")
+	dir := filepath.Dir(remotePath)
+	// Try wget then curl. -L for curl to follow redirects.
+	cmd := fmt.Sprintf("mkdir -p %s && (wget -qO- %s || curl -L %s) | tar -xzC %s",
+		dir, url, url, dir)
+
+	return session.Run(cmd)
 }
 
 func uploadBinary(client *ssh.Client, remotePath string) error {
