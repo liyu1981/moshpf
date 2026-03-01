@@ -103,6 +103,12 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 		return err
 	}
 
+	if masterPort == 0 {
+		if addr, ok := ln.Addr().(*net.TCPAddr); ok {
+			masterPort = uint16(addr.Port)
+		}
+	}
+
 	f.forwards[masterPort] = protocol.ForwardEntry{
 		LocalAddr:  localAddr,
 		RemoteHost: remoteHost,
