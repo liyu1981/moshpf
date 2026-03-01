@@ -61,7 +61,7 @@ const (
 	TransportModeTCP      TransportMode = "tcp"
 )
 
-func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode, autoForward, noRestore bool) error {
+func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode, autoForward, noRestore, localOnly bool) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mpf mosh [user@]host")
 	}
@@ -119,7 +119,7 @@ func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode,
 		}
 	}
 
-	fwd := forward.NewForwarder(nil, remoteHostname, stateMgr, target)
+	fwd := forward.NewForwarder(nil, remoteHostname, stateMgr, target, localOnly)
 
 	// Start the session for port forwarding
 	go func() {

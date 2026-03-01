@@ -293,32 +293,18 @@ func checkConflict() (passiveMode bool, err error) {
 	}
 	defer conn.Close()
 
-	// 1. Get list from existing agent
-	_, _ = conn.Write([]byte("LIST"))
-	buf := make([]byte, 4096)
+	// 1. Get session count from existing agent
+	_, _ = conn.Write([]byte("SESSIONS"))
+	buf := make([]byte, 64)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return false, nil // Assume stale socket
 	}
 
-	activeList := string(buf[:n])
-	fmt.Fprintf(os.Stderr, "\n\033[33m⚠️  An active moshpf agent is already running for this user.\033[0m\n")
-	fmt.Fprintf(os.Stderr, "Existing Forwardings:\n%s\n\n", activeList)
-	fmt.Fprintf(os.Stderr, "Choose an action: [\033[1mC\033[0montinue to mosh (no new forwardings), [\033[1mK\033[0mill existing agent, [\033[1mA\033[0mbort? ")
+	sessionsCount, _ := strconv.Atoi(string(buf[:n]))
 
-	// 2. Read choice
-	reader := bufio.NewReader(os.Stdin)
-	char, _, err := reader.ReadRune()
-	if err != nil {
-		return false, fmt.Errorf("failed to read user choice: %v", err)
-	}
-
-	switch strings.ToUpper(string(char)) {
-	case "C":
-		fmt.Fprintf(os.Stderr, "\nStarting in passive mode...\n")
-		return true, nil
-	case "K":
-		fmt.Fprintf(os.Stderr, "\nStopping existing agent and starting fresh...\n")
+	if sessionsCount == 0 {
+		fmt.Fprintf(os.Stderr, "\n\033[33m⚠️  An idle moshpf agent is already running. Restarting it...\033[0m\n")
 		kConn, err := net.Dial("unix", sockPath)
 		if err == nil {
 			_, _ = kConn.Write([]byte("STOP"))
@@ -332,6 +318,34 @@ func checkConflict() (passiveMode bool, err error) {
 			time.Sleep(100 * time.Millisecond)
 		}
 		return false, nil
+	}
+
+	// 2. Get list from existing agent for user context
+	lConn, err := net.Dial("unix", sockPath)
+	if err == nil {
+		defer lConn.Close()
+		_, _ = lConn.Write([]byte("LIST"))
+		n, err = lConn.Read(buf)
+		if err == nil {
+			activeList := string(buf[:n])
+			fmt.Fprintf(os.Stderr, "\n\033[33m⚠️  An active moshpf agent is already running for this user.\033[0m\n")
+			fmt.Fprintf(os.Stderr, "Existing Forwardings:\n%s\n\n", activeList)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Choose an action: [\033[1mC\033[0montinue to mosh (no new forwardings), [\033[1mA\033[0mbort? ")
+
+	// 3. Read choice
+	reader := bufio.NewReader(os.Stdin)
+	char, _, err := reader.ReadRune()
+	if err != nil {
+		return false, fmt.Errorf("failed to read user choice: %v", err)
+	}
+
+	switch strings.ToUpper(string(char)) {
+	case "C":
+		fmt.Fprintf(os.Stderr, "\nStarting in passive mode...\n")
+		return true, nil
 	default:
 		fmt.Fprintf(os.Stderr, "\nAborting.\n")
 		os.Exit(1)
@@ -377,6 +391,11 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		os.Exit(0)
 	}
 
+	if cmd == "SESSIONS" {
+		_, _ = conn.Write([]byte(strconv.Itoa(a.sessions.Count())))
+		return
+	}
+
 	s := a.getBestSession()
 	if s == nil {
 		_, _ = conn.Write([]byte("ERROR: No active session"))
@@ -404,9 +423,7 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 
 				localAddr := e.LocalAddr
 				if strings.HasPrefix(localAddr, ":") {
-					localAddr = resp.MasterIP + " :" + localAddr[1:]
-				} else if strings.Contains(localAddr, ":") {
-					localAddr = strings.Replace(localAddr, ":", " ", 1)
+					localAddr = resp.MasterIP + localAddr
 				}
 
 				autoStr := "MANUAL"

@@ -19,6 +19,7 @@ func main() {
 	mode := bootstrap.TransportModeFallback
 	autoForward := true
 	noRestore := false
+	localOnly := false
 	var cmd string
 	var cmdArgs []string
 
@@ -39,6 +40,10 @@ func main() {
 			continue
 		} else if arg == "--no-restore" {
 			noRestore = true
+			i++
+			continue
+		} else if arg == "--local" {
+			localOnly = true
 			i++
 			continue
 		}
@@ -69,7 +74,7 @@ func main() {
 				os.Exit(1)
 			}
 			remotePath := "~/.local/bin/mpf"
-			return bootstrap.Run(args, remotePath, isDev, mode, autoForward, noRestore)
+			return bootstrap.Run(args, remotePath, isDev, mode, autoForward, noRestore, localOnly)
 		},
 	}
 
@@ -155,6 +160,7 @@ func printUsage() {
 	fmt.Println("                  (Default: try QUIC, fallback to TCP)")
 	fmt.Println("  --no-auto-forward  Disable auto port forwarding from slave side")
 	fmt.Println("  --no-restore       Disable auto restoring forwards from saved state(~/.mpf/forwards.json)")
+	fmt.Println("  --local            Bind port forwarding to local loopback only (127.0.0.1)")
 	fmt.Println("\nCommands:")
 	fmt.Println("  mosh <args>     Start a mosh session with port forwarding")
 	fmt.Println("  forward <port>  Request port forward from an active session")

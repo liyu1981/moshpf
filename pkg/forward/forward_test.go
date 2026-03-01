@@ -2,6 +2,7 @@ package forward
 
 import (
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/liyu1981/moshpf/pkg/tunnel"
@@ -33,7 +34,7 @@ func TestForwarder(t *testing.T) {
 	}
 	_ = s_session // Avoid unused error
 
-	f := NewForwarder(c_session, "test-remote", nil, "user@host")
+	f := NewForwarder(c_session, "test-remote", nil, "user@host", false)
 
 	// Test ListenAndForward
 	// Use :0 to get an ephemeral port
@@ -64,5 +65,29 @@ func TestForwarder(t *testing.T) {
 
 	if len(f.GetForwardEntries()) != 0 {
 		t.Errorf("Expected 0 entries after close")
+	}
+
+	// Test localOnly
+	f2 := NewForwarder(nil, "test-remote", nil, "user@host", true)
+	err = f2.ListenAndForward(":0", "localhost", 1234, false)
+	if err != nil {
+		t.Fatalf("ListenAndForward failed: %v", err)
+	}
+	for _, e := range f2.GetForwardEntries() {
+		if !strings.HasPrefix(e.LocalAddr, "127.0.0.1:") {
+			t.Errorf("Expected localAddr to start with 127.0.0.1:, got %s", e.LocalAddr)
+		}
+	}
+
+	// Test default (0.0.0.0)
+	f3 := NewForwarder(nil, "test-remote", nil, "user@host", false)
+	err = f3.ListenAndForward(":0", "localhost", 1234, false)
+	if err != nil {
+		t.Fatalf("ListenAndForward failed: %v", err)
+	}
+	for _, e := range f3.GetForwardEntries() {
+		if !strings.HasPrefix(e.LocalAddr, "0.0.0.0:") {
+			t.Errorf("Expected localAddr to start with 0.0.0.0:, got %s", e.LocalAddr)
+		}
 	}
 }

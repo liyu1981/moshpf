@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/liyu1981/moshpf/pkg/protocol"
@@ -17,6 +18,7 @@ type Forwarder struct {
 	sessions   *tunnel.SessionManager
 	remoteName string
 	masterIP   string
+	localOnly  bool
 	nextID     uint32
 	listeners  map[uint16]net.Listener
 	forwards   map[uint16]protocol.ForwardEntry
@@ -25,11 +27,12 @@ type Forwarder struct {
 	mu         sync.Mutex
 }
 
-func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Manager, target string) *Forwarder {
+func NewForwarder(session *tunnel.Session, remoteName string, stateMgr *state.Manager, target string, localOnly bool) *Forwarder {
 	f := &Forwarder{
 		sessions:   tunnel.NewSessionManager(),
 		remoteName: remoteName,
 		masterIP:   protocol.GetLocalIP(),
+		localOnly:  localOnly,
 		state:      stateMgr,
 		target:     target,
 		listeners:  make(map[uint16]net.Listener),
@@ -75,7 +78,17 @@ func (f *Forwarder) getBestSessionLocked() *tunnel.Session {
 
 func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort uint16, isAuto bool) error {
 	var masterPort uint16
-	fmt.Sscanf(localAddr, ":%d", &masterPort)
+
+	// Resolve localAddr based on localOnly if it is a port-only address
+	if strings.HasPrefix(localAddr, ":") {
+		if f.localOnly {
+			localAddr = "127.0.0.1" + localAddr
+		} else {
+			localAddr = "0.0.0.0" + localAddr
+		}
+	}
+
+	fmt.Sscanf(localAddr, "%*[^:]:%d", &masterPort)
 	if masterPort == 0 {
 		// Try to parse if it contains hostname
 		_, portStr, err := net.SplitHostPort(localAddr)
