@@ -21,15 +21,6 @@ func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, err
 
 	shouldDeploy := force
 
-	if shouldDeploy {
-		// In dev/force mode, try to stop the existing agent first to avoid "text file busy"
-		session, err := client.NewSession()
-		if err == nil {
-			_ = session.Run(fmt.Sprintf("./%s stop", remotePath))
-			session.Close()
-		}
-	}
-
 	if !shouldDeploy {
 		// Check version
 		session, err := client.NewSession()
@@ -51,7 +42,16 @@ func DeployAgent(client *ssh.Client, remotePath string, force bool) (string, err
 
 	if shouldDeploy {
 		log.Info().Str("version", constant.Version).Msg("Deploying mpf to remote")
+
+		// Try to stop the existing agent first to avoid "text file busy"
+		session, err := client.NewSession()
+		if err == nil {
+			_ = session.Run(fmt.Sprintf("./%s stop", remotePath))
+			session.Close()
+		}
+
 		remoteArch, err := getRemoteArch(client)
+		log.Info().Str("remote_arch", remoteArch).Msg("Remote architecture detected")
 		if err != nil {
 			log.Warn().Err(err).Msg("Failed to get remote architecture, assuming match and trying to upload")
 			if err := uploadBinary(client, remotePath); err != nil {
