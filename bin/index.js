@@ -27,6 +27,19 @@ function getArch() {
 
 const platform = getPlatform();
 const arch = getArch();
+
+const SUPPORTED_PLATFORMS = [
+    'linux-amd64',
+    'linux-arm64',
+    'darwin-arm64'
+];
+
+if (!SUPPORTED_PLATFORMS.includes(`${platform}-${arch}`)) {
+    console.error(`Unsupported platform: ${platform}-${arch}`);
+    console.error(`Supported platforms: ${SUPPORTED_PLATFORMS.join(', ')}`);
+    process.exit(1);
+}
+
 const binDir = path.join(os.homedir(), '.mpf', 'bin');
 const binPath = path.join(binDir, `${BINARY_NAME}-${TAG}-${platform}-${arch}`);
 

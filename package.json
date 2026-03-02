@@ -1,13 +1,10 @@
 {
   "name": "@liyu1981/mpf",
-  "version": "0.1.0",
-  "description": "Mosh Port Forwarding wrapper",
+  "version": "0.0.0-dev",
+  "description": "Mosh Port Forwarding",
   "main": "bin/index.js",
   "bin": {
     "mpf": "bin/index.js"
-  },
-  "scripts": {
-    "test": "echo "Error: no test specified" && exit 1"
   },
   "repository": {
     "type": "git",
@@ -18,6 +15,11 @@
     "ssh",
     "port-forwarding",
     "tunnel"
+  ],
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
   ],
   "author": "Yu Li",
   "license": "GPL-3.0",
