@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/gob"
 	"fmt"
@@ -169,38 +168,30 @@ func Run() error {
 	logger.Init()
 	log.Info().Msg("Agent starting")
 
-	// 1. Check for existing agent (Conflict Resolution)
-	passiveMode, err := checkConflict()
-	if err != nil {
-		return err
-	}
-
 	// Generate ephemeral cert for QUIC
 	cert, fingerprint, err := tunnel.GenerateEphemeralCert()
 	if err != nil {
 		return fmt.Errorf("failed to generate cert: %v", err)
 	}
 
-	// Start QUIC listener (Only if not in passive mode)
+	// Start QUIC listener
 	var qListener *quic.Listener
 	var qPort uint16
-	if !passiveMode {
-		quicConfig := &quic.Config{
-			Tracer: logger.GetQuicTracer(),
-		}
+	quicConfig := &quic.Config{
+		Tracer: logger.GetQuicTracer(),
+	}
 
-		for {
-			port := uint16(constant.QUIC_PORT_START + rand.Intn(constant.QUIC_PORT_END-constant.QUIC_PORT_START+1))
-			l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), quicConfig)
-			if err == nil {
-				qListener = l
-				qPort = port
-				log.Info().Uint16("port", qPort).Msg("QUIC listener started")
-				break
-			}
-			log.Debug().Uint16("port", port).Err(err).Msg("Failed to bind to QUIC port, retrying...")
-			time.Sleep(100 * time.Millisecond)
+	for {
+		port := uint16(constant.QUIC_PORT_START + rand.Intn(constant.QUIC_PORT_END-constant.QUIC_PORT_START+1))
+		l, err := quic.ListenAddr(fmt.Sprintf(":%d", port), tunnel.GetTLSConfigServer(cert), quicConfig)
+		if err == nil {
+			qListener = l
+			qPort = port
+			log.Info().Uint16("port", qPort).Msg("QUIC listener started")
+			break
 		}
+		log.Debug().Uint16("port", port).Err(err).Msg("Failed to bind to QUIC port, retrying...")
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	conn := &stdioConn{
@@ -235,7 +226,7 @@ func Run() error {
 		return fmt.Errorf("version mismatch: %s != %s", hello.Version, constant.Version)
 	}
 
-	if hello.AutoForward && !passiveMode {
+	if hello.AutoForward {
 		log.Info().Msg("Auto port forwarding enabled")
 		a.autoForwarder = NewAutoForwarder(a)
 		a.autoForwarder.Start()
@@ -254,103 +245,32 @@ func Run() error {
 	// Add the primary session
 	a.addSession(session)
 
-	if !passiveMode {
-		go a.startUnixSocketServer()
+	go a.startUnixSocketServer()
 
-		// Wait for QUIC connection if listener started
-		if qListener != nil {
-			go func() {
-				defer qListener.Close()
-				for {
-					qConn, err := qListener.Accept(context.Background())
-					if err != nil {
-						log.Debug().Err(err).Msg("QUIC accept failed")
-						return
-					}
-					log.Info().Msg("QUIC connection established, adding session")
-					qSession, err := tunnel.NewQuicSession(qConn, true)
-					if err != nil {
-						log.Error().Err(err).Msg("Failed to create QUIC session")
-						continue
-					}
-					a.addSession(qSession)
+	// Wait for QUIC connection if listener started
+	if qListener != nil {
+		go func() {
+			defer qListener.Close()
+			for {
+				qConn, err := qListener.Accept(context.Background())
+				if err != nil {
+					log.Debug().Err(err).Msg("QUIC accept failed")
+					return
 				}
-			}()
-		}
+				log.Info().Msg("QUIC connection established, adding session")
+				qSession, err := tunnel.NewQuicSession(qConn, true)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to create QUIC session")
+					continue
+				}
+				a.addSession(qSession)
+			}
+		}()
 	}
 
 	// The main goroutine just blocks now.
 	// We can use a channel to wait for a global shutdown if needed.
 	select {}
-}
-
-func checkConflict() (passiveMode bool, err error) {
-	sockPath := protocol.GetUnixSocketPath()
-	conn, err := net.Dial("unix", sockPath)
-	if err != nil {
-		// No existing agent or stale socket
-		return false, nil
-	}
-	defer conn.Close()
-
-	// 1. Get session count from existing agent
-	_, _ = conn.Write([]byte("SESSIONS"))
-	buf := make([]byte, 64)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return false, nil // Assume stale socket
-	}
-
-	sessionsCount, _ := strconv.Atoi(string(buf[:n]))
-
-	if sessionsCount == 0 {
-		fmt.Fprintf(os.Stderr, "\n\033[33m⚠️  An idle moshpf agent is already running. Restarting it...\033[0m\n")
-		kConn, err := net.Dial("unix", sockPath)
-		if err == nil {
-			_, _ = kConn.Write([]byte("STOP"))
-			kConn.Close()
-		}
-		// Wait a bit for the socket to clear
-		for i := 0; i < 20; i++ {
-			if _, err := os.Stat(sockPath); os.IsNotExist(err) {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		return false, nil
-	}
-
-	// 2. Get list from existing agent for user context
-	lConn, err := net.Dial("unix", sockPath)
-	if err == nil {
-		defer lConn.Close()
-		_, _ = lConn.Write([]byte("LIST"))
-		n, err = lConn.Read(buf)
-		if err == nil {
-			activeList := string(buf[:n])
-			fmt.Fprintf(os.Stderr, "\n\033[33m⚠️  An active moshpf agent is already running for this user.\033[0m\n")
-			fmt.Fprintf(os.Stderr, "Existing Forwardings:\n%s\n\n", activeList)
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "Choose an action: [\033[1mC\033[0montinue to mosh (no new forwardings), [\033[1mA\033[0mbort? ")
-
-	// 3. Read choice
-	reader := bufio.NewReader(os.Stdin)
-	char, _, err := reader.ReadRune()
-	if err != nil {
-		return false, fmt.Errorf("failed to read user choice: %v", err)
-	}
-
-	switch strings.ToUpper(string(char)) {
-	case "C":
-		fmt.Fprintf(os.Stderr, "\nStarting in passive mode...\n")
-		return true, nil
-	default:
-		fmt.Fprintf(os.Stderr, "\nAborting.\n")
-		os.Exit(1)
-	}
-	return false, nil
 }
 
 func (a *Agent) startUnixSocketServer() {
@@ -396,13 +316,18 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		return
 	}
 
-	s := a.getBestSession()
-	if s == nil {
-		_, _ = conn.Write([]byte("ERROR: No active session"))
-		return
-	}
-
 	if cmd == "LIST" {
+		if a.sessions.Count() == 0 {
+			_, _ = conn.Write([]byte("ERROR: No active session"))
+			return
+		}
+
+		s := a.getBestSession()
+		if s == nil {
+			_, _ = conn.Write([]byte("ERROR: No active session"))
+			return
+		}
+
 		err = s.Send(protocol.ListRequest{})
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to send ListRequest")
@@ -411,11 +336,8 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 
 		select {
 		case resp := <-a.listChan:
-			res := ""
-			for i, e := range resp.Entries {
-				if i > 0 {
-					res += "\n"
-				}
+			res := fmt.Sprintf("Session: %s -> %s\n", resp.MasterIP, protocol.GetLocalIP())
+			for _, e := range resp.Entries {
 				status := "OK"
 				if e.Error != "" {
 					status = "ERROR: " + e.Error
@@ -431,7 +353,7 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 					autoStr = "AUTO"
 				}
 
-				res += fmt.Sprintf("%d -> %s [%s] (%s) %s", e.RemotePort, localAddr, e.Transport, status, autoStr)
+				res += fmt.Sprintf("  %d -> %s [%s] (%s) %s\n", e.RemotePort, localAddr, e.Transport, status, autoStr)
 			}
 			_, _ = conn.Write([]byte(res))
 		case <-time.After(5 * time.Second):
@@ -442,6 +364,12 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 		port, err := strconv.ParseUint(portStr, 10, 16)
 		if err != nil {
 			_, _ = conn.Write([]byte("ERROR: Invalid port"))
+			return
+		}
+
+		s := a.getBestSession()
+		if s == nil {
+			_, _ = conn.Write([]byte("ERROR: No active session"))
 			return
 		}
 
@@ -478,6 +406,12 @@ func (a *Agent) handleUnixConn(conn net.Conn) {
 
 		if slavePort == 0 || masterPort == 0 {
 			_, _ = conn.Write([]byte("ERROR: Invalid port mapping"))
+			return
+		}
+
+		s := a.getBestSession()
+		if s == nil {
+			_, _ = conn.Write([]byte("ERROR: No active session"))
 			return
 		}
 

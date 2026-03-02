@@ -119,45 +119,109 @@ func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode,
 		}
 	}
 
+	shouldStartAgent, err := checkRemoteConflict(client, remotePath)
+	if err != nil {
+		return err
+	}
+
 	fwd := forward.NewForwarder(nil, remoteHostname, stateMgr, target, localOnly)
 
 	// Start the session for port forwarding
-	go func() {
-		// Initial restore from state
-		if stateMgr != nil && !noRestore {
-			for mStr, sStr := range stateMgr.GetForwards(target) {
-				var mPort, sPort uint16
-				fmt.Sscanf(mStr, "%d", &mPort)
-				fmt.Sscanf(sStr, "%d", &sPort)
-				if mPort > 0 && sPort > 0 {
-					_ = fwd.ListenAndForward(fmt.Sprintf(":%d", mPort), "localhost", sPort, false)
+	if shouldStartAgent {
+		go func() {
+			// Initial restore from state
+			if stateMgr != nil && !noRestore {
+				for mStr, sStr := range stateMgr.GetForwards(target) {
+					var mPort, sPort uint16
+					fmt.Sscanf(mStr, "%d", &mPort)
+					fmt.Sscanf(sStr, "%d", &sPort)
+					if mPort > 0 && sPort > 0 {
+						_ = fwd.ListenAndForward(fmt.Sprintf(":%d", mPort), "localhost", sPort, false)
+					}
 				}
 			}
-		}
-		// Initial session using the already established client
-		err := runSessionWithClient(client, remotePath, target, fwd, mode, autoForward)
-		if err != nil {
-			log.Error().Err(err).Msg("Initial session failed, reconnecting...")
-		}
-
-		backoff := 1 * time.Second
-		for {
-			err := runSession(target, remoteBinaryPath, isDev, fwd, mode, autoForward)
+			// Initial session using the already established client
+			err := runSessionWithClient(client, remotePath, target, fwd, mode, autoForward)
 			if err != nil {
-				log.Error().Err(err).Msg("Session failed, reconnecting...")
-				time.Sleep(backoff)
-				backoff *= 2
-				if backoff > 30*time.Second {
-					backoff = 30 * time.Second
-				}
-				continue
+				log.Error().Err(err).Msg("Initial session failed, reconnecting...")
 			}
-			return
-		}
-	}()
+
+			backoff := 1 * time.Second
+			for {
+				err := runSession(target, remoteBinaryPath, isDev, fwd, mode, autoForward)
+				if err != nil {
+					log.Error().Err(err).Msg("Session failed, reconnecting...")
+					time.Sleep(backoff)
+					backoff *= 2
+					if backoff > 30*time.Second {
+						backoff = 30 * time.Second
+					}
+					continue
+				}
+				return
+			}
+		}()
+	} else {
+		fmt.Printf("Starting mosh without agent (passive mode)\r\n")
+		client.Close() // We don't need the client anymore if we don't start the agent
+	}
 
 	// Run mosh in child
 	return mosh.Run(args, isDev)
+}
+
+func checkRemoteConflict(client *ssh.Client, remotePath string) (bool, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return true, err
+	}
+	defer session.Close()
+
+	var stdout, stderr strings.Builder
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	// Probe with "list"
+	_ = session.Run(fmt.Sprintf("./%s list", remotePath))
+	out := stdout.String()
+
+	if strings.Contains(out, "Session:") {
+		// Active conflict
+		fmt.Printf("\r\n\033[33m⚠️  An active moshpf agent is already running for this user.\033[0m\r\n")
+		fmt.Printf("Existing Forwardings:\r\n%s\r\n", out)
+		fmt.Printf("\033[33m⚠️  Note: If you continue, mpf agent will not start and there is no auto port forwarding.\033[0m\r\n")
+
+		options := []string{
+			"Continue to mosh",
+			"Abort",
+		}
+
+		selected, err := util.SelectMenu("Choose an action:", options)
+		if err != nil {
+			fmt.Printf("\r\nAborting.\r\n")
+			os.Exit(0)
+		}
+
+		if selected == 0 {
+			fmt.Printf("\r\nContinuing...\r\n")
+			return false, nil
+		}
+		os.Exit(0)
+	} else if strings.Contains(out, "ERROR: No active session") {
+		// Idle agent - stop it
+		fmt.Printf("\r\n\033[33m⚠️  An idle moshpf agent is already running. Restarting it...\033[0m\r\n")
+		sStop, err := client.NewSession()
+		if err == nil {
+			_ = sStop.Run(fmt.Sprintf("./%s stop", remotePath))
+			sStop.Close()
+		}
+		// Brief wait for socket cleanup
+		time.Sleep(500 * time.Millisecond)
+		return true, nil
+	}
+
+	// No agent or other error, assume we can start one
+	return true, nil
 }
 
 func runSession(target string, remoteBinaryPath string, isDev bool, fwd *forward.Forwarder, mode TransportMode, autoForward bool) error {
