@@ -63,6 +63,5 @@ func GetBufferWarning(side string, info UDPBufferInfo) string {
 	msg += fmt.Sprintf("Current: %srmem_max=%d, wmem_max=%d%s\r\n", cyan, info.RMemMax, info.WMemMax, reset)
 	msg += fmt.Sprintf("Recommended: at least %s%d%s\r\n", bold, MinBufferBytes, reset)
 	msg += fmt.Sprintf("Documentation: %shttps://github.com/liyu1981/moshpf/wiki/quic-buffer.md%s\r\n", cyan, reset)
-	msg += "Press Enter to continue anyway, or Esc to exit..."
 	return msg
 }

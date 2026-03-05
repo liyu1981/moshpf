@@ -21,36 +21,29 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
 )
 
-func waitEnterOrEsc() error {
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return nil
+func handleBufferIssue(side string, info tunnel.UDPBufferInfo, currentMode TransportMode) (TransportMode, error) {
+	warn := tunnel.GetBufferWarning(side, info)
+	if warn == "" {
+		return currentMode, nil
 	}
-
-	state, err := term.MakeRaw(fd)
-	if err != nil {
-		return err
+	fmt.Print(warn)
+	options := []string{
+		"Fallback to TCP (Recommended)",
+		"Continue with QUIC anyway",
+		"Exit",
 	}
-	defer term.Restore(fd, state)
-
-	buf := make([]byte, 1)
-	for {
-		_, err := os.Stdin.Read(buf)
-		if err != nil {
-			return err
-		}
-		if buf[0] == '\r' || buf[0] == '\n' {
-			fmt.Print("\r\n")
-			return nil
-		}
-		if buf[0] == 0x1b { // Esc
-			fmt.Print("\r\nAborted by user\r\n")
-			return fmt.Errorf("aborted")
-		}
+	selected, err := util.SelectMenu("Choose an action:", options)
+	if err != nil || selected == 2 {
+		return currentMode, fmt.Errorf("aborted")
 	}
+	if selected == 0 {
+		fmt.Printf("Falling back to TCP...\r\n")
+		return TransportModeTCP, nil
+	}
+	fmt.Printf("Continuing with QUIC...\r\n")
+	return currentMode, nil
 }
 
 type TransportMode string
@@ -85,12 +78,11 @@ func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode,
 	if mode != TransportModeTCP {
 		localBuf, err := tunnel.GetUDPBufferInfo()
 		if err == nil {
-			if warn := tunnel.GetBufferWarning("local", localBuf); warn != "" {
-				fmt.Print(warn)
-				if err := waitEnterOrEsc(); err != nil {
-					return nil // Graceful exit
-				}
+			newMode, err := handleBufferIssue("local", localBuf, mode)
+			if err != nil {
+				return nil // Graceful exit
 			}
+			mode = newMode
 		}
 	}
 
@@ -110,12 +102,12 @@ func Run(args []string, remoteBinaryPath string, isDev bool, mode TransportMode,
 		rmem, wmem, err := GetRemoteUDPBufferInfo(client)
 		if err == nil {
 			remoteBuf := tunnel.UDPBufferInfo{RMemMax: rmem, WMemMax: wmem}
-			if warn := tunnel.GetBufferWarning("remote", remoteBuf); warn != "" {
-				fmt.Print(warn)
-				if err := waitEnterOrEsc(); err != nil {
-					return nil // Graceful exit
-				}
+			newMode, err := handleBufferIssue("remote", remoteBuf, mode)
+			if err != nil {
+				client.Close()
+				return nil // Graceful exit
 			}
+			mode = newMode
 		}
 	}
 
