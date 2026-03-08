@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -12,11 +13,14 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var globalWriter io.Writer
+
 func Init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 
 	if util.IsDev() {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
+		globalWriter = zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
+		log.Logger = log.Output(globalWriter)
 		zerolog.SetGlobalLevel(zerolog.TraceLevel)
 		return
 	}
@@ -40,10 +44,18 @@ func Init() {
 		LocalTime:  true,
 		Compress:   true,
 	}
+	globalWriter = lumberjackLogger
 
 	// We use InfoLevel as the base for the file log.
 	// We use MultiLevelWriter to log to both file and stderr if needed,
 	// but here we just log to file. If we want silence on console, we only set file as output.
-	log.Logger = zerolog.New(lumberjackLogger).With().Timestamp().Logger()
+	log.Logger = zerolog.New(globalWriter).With().Timestamp().Logger()
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+}
+
+func Writer() io.Writer {
+	if globalWriter == nil {
+		return os.Stderr
+	}
+	return globalWriter
 }

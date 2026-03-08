@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+	"github.com/liyu1981/moshpf/pkg/logger"
 	"github.com/liyu1981/moshpf/pkg/protocol"
 	"github.com/quic-go/quic-go"
 )
@@ -72,10 +73,12 @@ func NewSession(conn io.ReadWriteCloser, server bool) (*Session, error) {
 
 	var ySession *yamux.Session
 	var err error
+	config := yamux.DefaultConfig()
+	config.LogOutput = logger.Writer()
 	if server {
-		ySession, err = yamux.Server(conn, nil)
+		ySession, err = yamux.Server(conn, config)
 	} else {
-		ySession, err = yamux.Client(conn, nil)
+		ySession, err = yamux.Client(conn, config)
 	}
 	if err != nil {
 		return nil, err
