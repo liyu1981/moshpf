@@ -91,3 +91,25 @@ func TestForwarder(t *testing.T) {
 		}
 	}
 }
+
+func TestListenAndForwardReentry(t *testing.T) {
+	f := NewForwarder(nil, "test-remote", nil, "user@host", false)
+
+	// First time: should succeed
+	err := f.ListenAndForward(":3001", "localhost", 3001, false)
+	if err != nil {
+		t.Fatalf("First ListenAndForward failed: %v", err)
+	}
+
+	// Second time with same port: should succeed silently
+	err = f.ListenAndForward(":3001", "localhost", 3001, false)
+	if err != nil {
+		t.Errorf("Second ListenAndForward failed: %v", err)
+	}
+
+	// Different target: should fail
+	err = f.ListenAndForward(":3001", "localhost", 3002, false)
+	if err == nil {
+		t.Errorf("Expected failure for different target on same port, but succeeded")
+	}
+}

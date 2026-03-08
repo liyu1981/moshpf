@@ -98,7 +98,11 @@ func (f *Forwarder) ListenAndForward(localAddr, remoteHost string, remotePort ui
 	}
 
 	f.mu.Lock()
-	if _, exists := f.listeners[masterPort]; exists {
+	if existing, exists := f.forwards[masterPort]; exists {
+		if existing.RemoteHost == remoteHost && existing.RemotePort == remotePort {
+			f.mu.Unlock()
+			return nil
+		}
 		f.mu.Unlock()
 		return fmt.Errorf("port %d already has an active listener", masterPort)
 	}
