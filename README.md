@@ -1,6 +1,11 @@
 # mpf: Mosh Port Forwarding
 
-`mpf` is a tool designed to solve a common problem: "How can I use port forwarding with Mosh?" Inspired by VS Code's port forwarding feature, `mpf` acts as a lightweight wrapper for Mosh, adding persistent and dynamic TCP port forwarding. It also maintains a mobile-friendly connection for your forwarded ports.
+> https://news.ycombinator.com/item?id=22815593
+> 
+> Mosh is great, but it does not support port forwarding. For some people, including myself, this is a deal breaker. It has been an open issue/feature request since 2012[1] and even
+> has a ~600 USD bounty on it[2].
+
+`mpf` is a tool designed to solve above famous problem of mosh. Inspired by VS Code's port forwarding feature, `mpf` acts as a lightweight wrapper for Mosh, adding persistent and dynamic TCP port forwarding. It also maintains a mobile-friendly connection for your forwarded ports.
 
 ## Demo
 
